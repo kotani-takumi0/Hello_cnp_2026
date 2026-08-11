@@ -22,8 +22,8 @@
 受け入れテストもセルに入っている）。ローカルで作業する場合:
 
 ```bash
-git clone https://github.com/kotani-takumi0/SIGNATE_Cup_2026.git
-cd SIGNATE_Cup_2026
+git clone https://github.com/kotani-takumi0/Hello_cnp_2026.git
+cd Hello_cnp_2026
 python3 -m venv .venv && source .venv/bin/activate   # 基準は Python 3.10.12
 pip install -r requirements.txt        # 追加ツールが要る場合のみ requirements-optional.txt
 # 共有ドライブから data/ の中身を取得（data/README.md 参照）
