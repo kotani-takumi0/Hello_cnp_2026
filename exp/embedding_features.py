@@ -1,0 +1,190 @@
+"""OpenAI embedding をローカルで扱う層（API は一切叩かない）。
+
+`colab_openai_embed.py` が作った npz を読み、既存のテキスト配管にそのまま挿す。
+
+**設計上の要点 — 文字列ではなく行列を流す**:
+  既存の配管（`text_features.nested_text_pred` / `fold_text_preds`,
+  `ensemble_experts._nested_text`, `holdout_check.fit_predict_experts`）は
+  `txt` を numpy 配列として受け取り `txt[tr]` で fold スライスしているだけなので、
+  `txt` を「文字列の1次元配列」から「埋め込みの2次元行列」に差し替えると、
+  スライスも fit も predict もそのまま動く。文字列をキーにした辞書引きは
+  正規化のズレでバグる（TF-IDF側と embedding側で正規化が違う）ので採らない。
+
+**次元の切り詰め**:
+  text-embedding-3 系は Matryoshka 学習済み。先頭 k 次元を取って L2 再正規化すれば
+  k 次元モデルとして機能する。742行に対して素の3072次元は明らかに過剰なので、
+  `dim` はハイパラとして扱う。API の再課金は要らない。
+
+**ハイパラの決め方**:
+  TF-IDF 側（`text_features.TFIDF_PARAMS`）と同じ流儀で、まず単体CVで (dim, C) を
+  決め打ちしてから合成に入れる。単体で選んでから合成、の順は守ること
+  （exp020/023/025 の3連敗は「単体を強くしたら合成で負けた」なので、
+  単体CVの数字を採用根拠にしてはいけない。あくまで設定値を1つに絞るためだけに使う）。
+
+単体CVの下見:
+  python3 exp/embedding_features.py --slug dx_outlook
+"""
+import os
+
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+
+DEFAULT_MODEL = "text-embedding-3-large"
+EXP_DIR = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(EXP_DIR)
+# npz の置き場所。data/ を先に見る（1列あたり11MBあり、素性としてはデータ寄り）。
+EMB_DIRS = (os.path.join(_ROOT, "data"), EXP_DIR)
+
+# 列名 -> npz の slug。colab_openai_embed.COLUMNS と対応する。
+SLUG_BY_COL = {
+    "今後のDX展望": "dx_outlook",
+    "企業概要": "overview",
+    "組織図": "org",
+}
+
+# 埋め込みLRの既定。solver は lbfgs（liblinear の dual は巡回順がランダムで
+# 再現性を壊す。text_features.LR_PARAMS のコメント参照）。
+# C はまだ暫定値。単体CVで決めてから固定すること。
+EMB_LR_PARAMS = dict(C=1.0, solver="lbfgs", max_iter=5000, random_state=0)
+EMB_DIM = 512  # 暫定値。単体CVで決めてから固定すること
+
+# E4(組織図)差し替え用に確定した設定。単体CVグリッド(seed=42)で決め、
+# それとは別のseed 0〜9 の10seedペア比較で ACCEPT(明確) を確認済み:
+#   ΔAUC +0.0853 (10/10) / ΔAP +0.0434 (10/10) / ΔF1 +0.0547 (10/10)
+#   現行TF-IDFとのOOF相関 0.560（exp021 の却下線 0.927 とは別物）
+ORG_EMB_DIM, ORG_EMB_C = 1024, 1.0
+
+_CACHE = {}
+
+
+def emb_path(slug, model=DEFAULT_MODEL):
+    """EMB_DIRS を順に探し、最初に見つかったパスを返す。無ければ先頭候補を返す。"""
+    name = f"_emb_{slug}_{model}.npz"
+    for d in EMB_DIRS:
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            return p
+    return os.path.join(EMB_DIRS[0], name)
+
+
+def _load_raw(slug, model):
+    key = (slug, model)
+    if key not in _CACHE:
+        path = emb_path(slug, model)
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"{path} が無い。Colab で colab_openai_embed.py を実行して "
+                f"npz を取得し、data/ か exp/ に置くこと。"
+            )
+        d = np.load(path, allow_pickle=True)
+        _CACHE[key] = (d["train"], d["test"], d["train_ids"], d["test_ids"])
+    return _CACHE[key]
+
+
+def truncate(mat, dim):
+    """Matryoshka 切り詰め: 先頭 dim 次元を取って L2 再正規化する。"""
+    if dim is None or dim >= mat.shape[1]:
+        return mat
+    sub = mat[:, :dim]
+    return sub / np.linalg.norm(sub, axis=1, keepdims=True)
+
+
+def load_embeddings(slug, dim=EMB_DIM, model=DEFAULT_MODEL, verify=True):
+    """(train行列, test行列) を返す。行順は data/train.csv, data/test.csv と一致。
+
+    verify=True のとき企業IDの並びを CSV と突き合わせる。npz を作り直したときの
+    行ズレは静かに効いて全ての比較を壊すので、既定で毎回確認する。
+    """
+    tr, te, tr_ids, te_ids = _load_raw(slug, model)
+    if verify:
+        for split, ids in (("train", tr_ids), ("test", te_ids)):
+            csv = pd.read_csv(f"data/{split}.csv", usecols=["企業ID"])["企業ID"].values
+            assert len(csv) == len(ids) and (csv == ids).all(), \
+                f"{split} の企業ID並びが npz と一致しない（行ズレ）"
+    return truncate(tr, dim), truncate(te, dim)
+
+
+def load_by_col(col, dim=EMB_DIM, model=DEFAULT_MODEL):
+    return load_embeddings(SLUG_BY_COL[col], dim=dim, model=model)
+
+
+def build_embed_model(params=None):
+    """文字列ではなく埋め込み行列を受け取る LR。`text_features.build_model` の代替。
+
+    埋め込みは L2 正規化済みなので StandardScaler は挟まない
+    （次元ごとに標準化するとノルム構造が壊れ、正則化の効き方が読めなくなる）。
+    """
+    return make_pipeline(LogisticRegression(**(params or EMB_LR_PARAMS)))
+
+
+def cross_similarity(slug_a, slug_b, dim=None, model=DEFAULT_MODEL):
+    """2つのテキスト列の意味的な近さ（コサイン）を train/test 分の1次元で返す。
+
+    例: cross_similarity("overview", "dx_outlook") = 「本業と今後の展望の乖離」。
+    char n-gram TF-IDF が構造的に作れない量で、ラベルを見ない行単位の決定的変換
+    なので fold 内 fit も不要（=リークしない）。
+    """
+    a_tr, a_te = load_embeddings(slug_a, dim=dim, model=model)
+    b_tr, b_te = load_embeddings(slug_b, dim=dim, model=model, verify=False)
+    return (a_tr * b_tr).sum(axis=1), (a_te * b_te).sum(axis=1)
+
+
+def _cv_scores(mat, y, params, seed=42, n_splits=5):
+    from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
+    from sklearn.model_selection import StratifiedKFold
+
+    oof = np.zeros(len(y))
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    for tr, va in skf.split(mat, y):
+        m = build_embed_model(params).fit(mat[tr], y[tr])
+        oof[va] = m.predict_proba(mat[va])[:, 1]
+    ths = np.arange(0.05, 0.95, 0.005)
+    f1s = [f1_score(y, (oof >= t).astype(int)) for t in ths]
+    b = int(np.argmax(f1s))
+    return dict(auc=roc_auc_score(y, oof), ap=average_precision_score(y, oof),
+                f1=f1s[b], th=ths[b]), oof
+
+
+def main():
+    """単体CVで (dim, C) の当たりを付ける。合成の採否判断には使わない。"""
+    import argparse
+    import warnings
+
+    warnings.filterwarnings("ignore")
+    p = argparse.ArgumentParser()
+    p.add_argument("--slug", default="dx_outlook", choices=list(SLUG_BY_COL.values()))
+    p.add_argument("--model", default=DEFAULT_MODEL)
+    p.add_argument("--dims", nargs="+", type=int, default=[256, 512, 1024, 3072])
+    p.add_argument("--cs", nargs="+", type=float, default=[0.03, 0.1, 0.3, 1.0, 3.0])
+    p.add_argument("--seed", type=int, default=42)
+    a = p.parse_args()
+
+    y = pd.read_csv("data/train.csv")["購入フラグ"].values
+    full, _ = load_embeddings(a.slug, dim=None, model=a.model)
+    print(f"{a.slug}: {full.shape}  正例率 {y.mean():.4f}")
+
+    rows = []
+    for dim in a.dims:
+        if dim > full.shape[1]:
+            continue
+        mat = truncate(full, dim)
+        for c in a.cs:
+            s, _ = _cv_scores(mat, y, {**EMB_LR_PARAMS, "C": c}, seed=a.seed)
+            rows.append(dict(dim=dim, C=c, **s))
+            print(f"  dim={dim:<5} C={c:<5} AUC {s['auc']:.4f}  AP {s['ap']:.4f}"
+                  f"  F1 {s['f1']:.4f} @ {s['th']:.3f}", flush=True)
+
+    df = pd.DataFrame(rows).sort_values("ap", ascending=False)
+    out = os.path.join(EXP_DIR, f"_emb_cv_{a.slug}.csv")
+    df.to_csv(out, index=False)
+    print(f"\n=== AP上位 ===\n{df.head(5).to_string(index=False)}")
+    print(f"保存: {out}")
+    print("\n参考（既存TF-IDF+LR単体, seed=42）: "
+          "DX展望 AUC .7894 / AP .5063 / F1 .5916, 組織図 AUC .6095 / AP .3437, "
+          "企業概要 AUC .650")
+
+
+if __name__ == "__main__":
+    main()
