@@ -18,20 +18,23 @@
 
 ## 1. セットアップ（全員、最初に1回）
 
+**Colabで作業する人は `notebooks/colab_runner.ipynb` を開くだけでよい**（セットアップも
+受け入れテストもセルに入っている）。ローカルで作業する場合:
+
 ```bash
-git clone <repo>
-cd SIGNATE_Cup_2026_DX
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+git clone https://github.com/kotani-takumi0/SIGNATE_Cup_2026.git
+cd SIGNATE_Cup_2026
+python3 -m venv .venv && source .venv/bin/activate   # 基準は Python 3.10.12
+pip install -r requirements.txt        # 追加ツールが要る場合のみ requirements-optional.txt
 # 共有ドライブから data/ の中身を取得（data/README.md 参照）
-python3 exp/repro_check.py          # ← 受け入れテスト。これが通るまで実験を始めない
+python3 exp/repro_check.py             # ← 受け入れテスト。これが通るまで実験を始めない
 ```
 
 `repro_check.py` の判定の意味:
 
 | 判定 | 意味 | やってよいこと |
 |---|---|---|
-| **OK** | 参照とビット一致 | すべて。記録値と直接比較してよい |
+| **OK** | 参照と一致（ずれても丸め誤差レベル） | すべて。記録値と直接比較してよい |
 | **WARN** | 提出ラベルは一致するが確率に微小なずれ | 粗い比較のみ。**ΔAP 0.0005級の微差判定は信用しない** |
 | **NG** | 本命が再現しない | **結果を共有しない**。原因を潰す |
 
@@ -39,29 +42,42 @@ python3 exp/repro_check.py          # ← 受け入れテスト。これが通�
 
 ## 2. Colab での実験
 
-### 2.1 ノートブックは「ドライバ」であって「実装」ではない
+### 2.1 使うもの: `notebooks/colab_runner.ipynb`
 
-Colabノートブックは3セルで済ませる。ロジックは1行も書かない。
-
-```python
-# セル1: 環境
-!git clone https://<TOKEN>@github.com/<org>/<repo>.git
-%cd <repo>
-!pip install -q -r requirements.txt
-
-# セル2: データ（Driveから）
-from google.colab import drive; drive.mount('/content/drive')
-!ln -sfn "/content/drive/MyDrive/signate_cup_2026/data" data
-!python exp/repro_check.py --fast        # 環境と決定性の確認
-
-# セル3: 実験
-!python exp/run_hypothesis.py H30
-```
+Colabで開くのはこれ1つ。clone → 基準環境構築 → データ接続 → 受け入れテスト → 実験 → 納品まで、
+セルを上から実行するだけになっている。**ノートブックには実装を1行も書かない。**
 
 理由: ノートブックに実装を書くと、**それを .py に書き直す工程＝再実装**になり、
-「良かったスコア」が再現する保証がなくなる。上の形なら書き直す対象が最初から存在しない。
+「良かったスコア」が再現する保証がなくなる。ドライバに徹すれば書き直す対象が最初から存在しない。
 
-### 2.2 メンバーの納品物 = 関数1つ + レジストリ1行
+計算量は小さい（train 742行）ので**ランタイムはCPUでよい**。GPU/TPUを選んでも速くならない。
+
+### 2.2 環境パリティ: Colabのカーネルは使わない
+
+Colabのカーネルは Python 3.11/3.12 で、基準環境（メンテナのローカル = **Python 3.10.12**、
+参照OOFを作った環境）と違う。ただし**ドライバはプロジェクトを import しない**ので、
+カーネルのPythonは無関係にできる。`uv` で 3.10.12 を別途立て、
+スクリプトはすべてそちらで実行する（`colab_runner.ipynb` のセル2）。
+
+```python
+PY = "/content/venv/bin/python"     # uv で立てた 3.10.12
+!{PY} exp/run_hypothesis.py H30     # 以降すべてこれで実行する
+```
+
+#### 検証結果（2026-08-11 実測）
+
+Colab環境との差を2つの次元に分けて測った。**どちらも提出ラベルは1行も動かない。**
+
+| 次元 | 条件 | 結果 |
+|---|---|---|
+| **Pythonビルド・wheel** | uv の standalone CPython 3.10.12 + `requirements.txt` を新規構築 | **6エキスパート全てハッシュ一致 / ラベル差0行**（＝uvで基準環境を完全再現できる） |
+| **CPUスレッド数** | 16スレッド → 2スレッド（Colab相当） | 木モデル・TF-IDF系は完全一致。BLASを使う E4（組織図embedding）だけ `3.9e-15`。合成OOFは `3.1e-15` / ラベル差0行 |
+
+つまりスレッド数差は float64 の丸め誤差レベルに収まるので、**スレッド数の固定は不要**。
+ただし実機のColabはCPUの世代も違うため、**最終的な判断は各自の初回 `repro_check.py` の出力で行う**こと。
+`max|Δ|` の桁が `1e-9` を超えたら異常として扱う。
+
+### 2.3 メンバーの納品物 = 関数1つ + レジストリ1行
 
 既存の契約（`exp/hypotheses.py`）をそのまま使う。
 
@@ -83,11 +99,13 @@ REGISTRY = {
 - fold依存の特徴（target encoding等）は `FOLD_REGISTRY` / `NEEDS_CV` 側に登録する。
 - 乱数を使う推定器を足す場合は **`random_state` を必ず明示**する（未指定は提出が変わる）。
 
-### 2.3 Colabの数字の扱い（最重要）
+### 2.4 Colabの数字の扱い（最重要）
 
-Colabはライブラリ構成もCPUもローカルと違うため、**絶対値は環境をまたいで比較できない**。
+`colab_runner.ipynb` を使えば基準環境にかなり近づくが、それでも CPU・BLAS の違いは残る。
+**`repro_check.py` が OK を出した環境の数字だけを信用する**こと。WARN や NG の環境で出た数字は
+記録値と比較できない。
 
-- **禁止**: Colabで出た OOF F1 と `experiments.md` の記録値を直接比べること。
+- **禁止**: WARN/NG 環境で出た OOF F1 を `experiments.md` の記録値と直接比べること。
 - **必須**: ペア比較（baseline と 候補）は**同一セッション内で完結**させること。
   同じ環境内のΔなら環境差は相殺されるので意味を持つ。
 - **役割分担**: Colab = スクリーニング（REJECT/PARKの足切り）。
@@ -103,6 +121,7 @@ Colabはライブラリ構成もCPUもローカルと違うため、**絶対値�
 | 対象 | 置き場所 | 理由 |
 |---|---|---|
 | `exp/*.py`, `documents/*.md` | **Git** | 差分に意味がある |
+| `notebooks/colab_runner.ipynb` | **Git** | Colabの入口。**出力は空のまま**コミットする |
 | `submission/*.csv` | **Git** | 提出の記録。**上書き禁止**（過去に事故あり）。Git管理下なら復元できる |
 | `exp/_*.csv`（スコア表） | **Git** | 実験の記録。小さい |
 | `data/`（配布データ・埋め込み） | **Drive** | 47MB。SIGNATE配布物は再配布不可 |

@@ -39,11 +39,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REFERENCE = os.path.join(ROOT, "exp", "repro_reference.npz")
 REQUIREMENTS = os.path.join(ROOT, "requirements.txt")
 
+# 参照OOFを作った基準環境。ここがズレると数値が一致しない可能性がある。
+BASE_PYTHON = "3.10.12"
+
 # 本命 exp026 の記録値（documents/experiments.md）。表示桁の4桁で照合する。
 REF_SEED = 42
 REF_METRICS = dict(auc=0.9500, ap=0.8646, f1=0.7864, th=0.2350)
 METRIC_TOL = 5e-5          # 4桁表示が一致する範囲
-DRIFT_WARN = 1e-9          # OOF確率のずれ。これ以下なら実質ビット一致
+# OOF確率のずれの許容。実測(2026-08-11): スレッド数を 16→2 に変えると、BLASを使う
+# E4(組織図embedding+LR)だけ 3.9e-15 ずれる（木モデルは完全一致、提出ラベルは差0行）。
+# 環境差はこの float64 の丸め誤差レベルに収まっている限り無害。
+DRIFT_WARN = 1e-9          # これ以下なら丸め誤差レベル＝実質一致
 DRIFT_NG = 1e-6            # 提出ラベルを動かした実績のあるオーダー
 
 
@@ -85,12 +91,18 @@ def _installed():
 
 def check_env():
     _hdr("1. 環境")
-    print(f"Python {sys.version.split()[0]}")
+    py = sys.version.split()[0]
+    py_ok = py == BASE_PYTHON
+    print(f"  {'OK' if py_ok else '  '} {'Python':16s} 基準 {BASE_PYTHON:10s} 実際 {py}")
+    if not py_ok:
+        print(f"     ↑ 基準環境と違う。Colabなら notebooks/colab_runner.ipynb を使うこと"
+              f"（uv で {BASE_PYTHON} を立てる）")
+
     pins, have = _parse_pins(REQUIREMENTS), _installed()
     if not pins:
         return _verdict(True, True, f"{REQUIREMENTS} が読めない。バージョン照合をスキップ")
 
-    bad = []
+    bad = [] if py_ok else ["python"]
     for name, want in sorted(pins.items()):
         got = have.get(name)
         mark = "OK" if got == want else "  "
@@ -230,6 +242,10 @@ def check_reference():
         return _verdict(True, True,
                         f"ラベルは一致するが確率に {worst:.1e} のずれがある。"
                         "微差（ΔAP 0.0005級）の判定はこの環境では信用しないこと")
+    if worst > 0.0:
+        return _verdict(True, False,
+                        f"参照と実質一致（最大 {worst:.1e} = float64の丸め誤差レベル、"
+                        "スレッド数差で出る）。記録値と直接比較してよい")
     return _verdict(True, False, "参照とビット一致。記録値と直接比較してよい")
 
 

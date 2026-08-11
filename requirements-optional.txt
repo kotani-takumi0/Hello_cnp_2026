@@ -1,0 +1,7 @@
+# 一部のスクリプトでのみ必要。通常の仮説検証には要らない。
+# Colab では入れないこと（catboost は重く、現行の本命では使わない）。
+#
+#   pip install -r requirements-optional.txt
+
+catboost==1.2.10   # make_submission_ensemble.py。現在は未採用（exp012 で REJECT）
+openai==2.8.1      # colab_openai_embed.py。埋め込み生成用で、通常は使わない

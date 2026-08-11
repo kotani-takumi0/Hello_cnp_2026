@@ -1,13 +1,15 @@
-# 再現性のためのバージョン固定。
+# 再現性のためのバージョン固定（コア）。
 # ここを揃えないと、同じコード・同じseedでもOOFが一致しない可能性がある。
-# 検証環境: Python 3.10.12 (WSL2 / Linux)
+# 基準環境: Python 3.10.12 / Linux x86_64（メンテナのローカル。参照OOFはこの環境で作った）
 #
-# セットアップ:
+# ローカル:
 #   python3 -m venv .venv && source .venv/bin/activate
 #   pip install -r requirements.txt
-#   python3 exp/repro_check.py     # ← 受け入れテスト（必須）
+#   python3 exp/repro_check.py        # ← 受け入れテスト（必須）
 #
-# バージョンを上げるときは、必ず repro_check.py を通してから上げること。
+# Colab: notebooks/colab_runner.ipynb を開く（uv で Python 3.10.12 を立てて基準環境を再現する）
+#
+# バージョンを上げるときは、必ず repro_check.py をフル実行してから上げること。
 # 通らなくなった場合は「環境が変わった」ので、過去のOOF記録と直接比較しない。
 
 numpy==2.2.6
@@ -20,7 +22,3 @@ threadpoolctl==3.6.0
 
 # テキスト特徴（形態素解析）。辞書が変わると企業概要のword TF-IDFが変わるため固定必須
 Janome==0.5.0
-
-# 以下は一部のスクリプトでのみ使用
-catboost==1.2.10   # make_submission_ensemble.py（現在は未採用: exp012でREJECT）
-openai==2.8.1      # colab_openai_embed.py（埋め込み生成。通常はColab側で実行）
