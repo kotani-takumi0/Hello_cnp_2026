@@ -737,3 +737,484 @@ Spearman相関を持ち、旧E7とE3の相関0.502より大きくなった。候
 ほぼ0となり、Intent追加は新情報の追加ではなくE3の役割をE7へ移した形である。これは
 **単体性能が測るラベル説明力と、アンサンブルが必要とする既存合成残差の説明力は別物**という
 実例。以後は単体APの上昇だけで進めず、既存OOF合成の誤りに対する条件付き寄与を事前診断する。
+
+## 2026-08-15  R1 target-aware DX展望 SetFit-style最小構成 → DiscoveryでREJECT
+
+`documents/experiment_roadmap_20260815.md` の最優先候補。固定済みdiscovery 482件だけを使い、
+lockbox 260件は開かなかった。各外側foldのtrain labelだけからsame-label / different-label pairを
+作り、`intfloat/multilingual-e5-base` の末尾2層をcosine pair lossで8 step更新した。
+更新後embeddingへLR headをfitし、外側validationを予測した。
+
+事前固定した最小設定:
+
+```
+入力             今後のDX展望のみ
+max_length       128（先頭/末尾を半分ずつ残すhead-tail truncation）
+encoder更新      最終2層 / 14,175,744 parameters
+loss             same=1 / different=0 のcosine MSE
+学習量           8 optimizer steps/fold、5 outer folds
+head             Logistic Regression C=1.0
+seed             20260815
+```
+
+smokeは同じ設定を2回実行して同一のloss・予測指標を再現。正式5foldの単体fold APは
+0.4432 / 0.5870 / 0.5545 / 0.5048 / 0.2839と不安定だった。
+
+```
+                       AUC      AP       F1
+E3_dx_text           0.7976   0.5062   0.5714
+R1 target_text       0.7339   0.4452   0.5097
+exp032 discovery     0.9401   0.8256   0.7773
+exp032 + R1          0.9388   0.8234   0.7742
+差                   -0.0012  -0.0022  -0.0031
+```
+
+R1とE3のSpearmanは0.764、exp032とは0.526で、新しい順位自体は作れた。しかしmeta weightは
+6.1%に留まり、exp032から救ったFN 1件に対して新FN 1件・新FP 1件を作った。多様性があっても
+残差価値がなく、Stage 1の早期停止条件（追加ΔAP負、F1悪化）に該当する。
+
+したがって **REJECT**。lockbox、10〜15 seed、複数文書化、step数/epoch/lr探索へは進まない。
+これは「購入ラベルを使う全手法」の否定ではなく、事前固定したE5-base少量fine-tune構成の否定。
+次はロードマップどおり、異なる予測原理のstructured-only TabPFNへ進む。
+
+成果物:
+
+- `exp/target_aware_text.py`
+- `exp/compare_target_aware_text.py`
+- `exp/_r1_target_text_discovery_seed20260815.npz`
+- `exp/_r1_target_text_discovery_seed20260815.json`
+
+## 2026-08-15  R2 structured-only TabPFN → 公式weightのライセンス承諾待ち
+
+ロードマップ第2候補。`tabpfn==8.3.0`を追加し、本文・TF-IDF・embedding・LLM score・
+手作業テキスト特徴を除いた基本構造化47列だけでDiscovery 5foldを作る
+`exp/compare_tabpfn.py`を実装した。exp032 discovery cacheと同じ分割で、E0/E0bとの相関、
+exp032追加Δ、error rescue、meta weightまで測る配管である。
+
+package導入後の`repro_check.py --fast`はOKで、既存環境の基準packageは変化していない。
+ただし公式pretrained weightの取得時に、Prior Labs側での一度限りのライセンス承諾と
+`TABPFN_TOKEN`が必要だと判明した。認証を迂回せず、smoke開始前で保留した。
+
+これは性能上のREJECTではない。次の条件が揃った場合だけ再開する。
+
+1. 現行大会画面で外部pretrained model利用可を確認する。
+2. ユーザー自身が `https://ux.priorlabs.ai` でライセンスを承諾する。
+3. API keyを環境変数 `TABPFN_TOKEN` として設定する（ログやGitへ書かない）。
+
+## 2026-08-15  R3 exp032 residual predictability診断 → Error gateはPASS
+
+固定discoveryのcross-fitted exp032/8 Expert予測だけを使い、さらに5foldでerror classifierを
+cross-fitした。入力はbase確率/entropy、Expert std/range、E3-E4、E7-E0、E0b-E0、E2-E1、
+train側だけで決めたthresholdからの距離。構造化94列は再投入していない。
+
+```
+誤り件数                    62 / 482 (12.9%)
+Expert不一致込み error AUC  0.8399
+confidence-only AUC         0.7470
+増分                         +0.0929
+shuffled AUC                0.4498 ± 0.0936 (max 0.5916)
+fold error AUC              0.9318 / 0.8418 / 0.8647 / 0.8537 / 0.7314
+signed residual Ridge R²    -0.0817
+```
+
+全foldでAUC 0.60を超え、confidence-onlyにも明確に勝ったのでR3のerror gateはPASS。
+一方、「怪しいか」は分かっても通常Ridgeでは「上げる/下げる」を学べなかったため、
+R5はbase-logit offset型の一構成だけに限定した。
+
+## 2026-08-15  R5 cross-fitted residual logit correction → REJECT
+
+R3のerror確率をouter-train内でさらにinner OOF化し、次の低自由度補正を実装した。
+
+```
+logit(p_new) = logit(p_exp032) + g(disagreement, error_probability)
+g            = L2 logistic correction (alpha=0.1固定)
+```
+
+```
+                    AUC      AP       F1
+exp032 discovery   0.9401   0.8256   0.7773
+R5 corrected       0.9360   0.8101   0.7729
+差                 -0.0041  -0.0155  -0.0044
+```
+
+fold AP差は -0.0169 / -0.0059 / +0.0039 / +0.0008 / -0.0152。FNを4件救ったが、
+新FN 3件・新FP 4件を作り、誤り総数は55→57へ増えた。したがって明確なREJECT。
+lockboxは開かず、alpha/特徴/gammaの探索には進まない。
+
+結論は、**exp032の誤りやすさには構造があるが、その情報だけでは正しい補正方向を作れない**。
+新しい強い表現が得られるまでresidual correction路線を閉じる。
+
+成果物:
+
+- `exp/diagnose_residual_predictability.py`
+- `exp/correct_residual.py`
+- `exp/_r3_residual_predictability.json`
+- `exp/_r5_residual_correction.json`
+
+## 2026-08-15  R4 structured-only ModernNCA → DiscoveryでREJECT
+
+TALENTのModernNCA公式実装と既定設定を確認し、必要なモデル部分だけを再実装した。
+入力は本文・TF-IDF・embedding・LLM scoreを除く基本構造化47列。numericはfold-trainの
+中央値補完と標準化、categoricalはfold-trainだけでone-hot化した。validation行とlabelは
+学習・近傍DBの両方から除外した。
+
+事前固定した最小設定:
+
+```
+数値表現         PLR embedding (77 frequencies, dim 34, lite)
+距離空間         linear projection dim 128 / Euclidean / temperature 1
+近傍推論         fold-train全labelのsoftmax距離加重
+学習時候補       fold-trainの50% sampling、自分自身は対角mask
+query sampling   class-balanced batch 64
+optimizer        AdamW lr=0.01, weight_decay=0.0002
+学習量           80 epoch固定、5 outer folds
+seed             20260815
+```
+
+```
+                       AUC      AP       F1
+exp035 fixed kNN      0.8213   0.5847   0.6154
+E0 anchor             0.8840   0.7480   0.6667
+E0b linear            0.9198   0.7828   0.7448
+R4 ModernNCA          0.6789   0.3942   0.4481
+exp032 discovery      0.9401   0.8256   0.7773
+exp032 + R4           0.9388   0.8141   0.7854
+差                    -0.0012  -0.0115  +0.0081
+```
+
+R4のfold APは0.5253 / 0.5180 / 0.3486 / 0.3014 / 0.3687。exp035とのSpearmanは
+0.084、exp032とは0.302で順位の多様性は高かったが、単体のラベル説明力が不足した。
+meta weightは1.7%。F1は2誤り減って改善したものの、AP主目的の事前ACCEPT条件
+（exp032追加ΔAP >= 0.005）を満たさず、さらに最初の停止条件「exp035より単体性能が
+明確に上がらない」に該当する。
+
+したがって **REJECT**。F1だけを見たtemperature/epoch/seed探索は行わず、lockboxも開かない。
+これはsupervised retrieval全般ではなく、TALENT既定値を今回の482件Discoveryへ移した
+最小構成の否定である。
+
+成果物:
+
+- `exp/modern_nca.py`
+- `exp/compare_modern_nca.py`
+- `exp/_r4_modern_nca_discovery_seed20260815.npz`
+- `exp/_r4_modern_nca_discovery_seed20260815.json`
+
+## 2026-08-15  H42 AutoCross-inspired 2-way cross探索 + sparse LR → DiscoveryでREJECT
+
+deep researchのSランク未実施候補。固定discovery 482件だけを使い、各outer-train内で
+数値bin境界、one-hot水準、cross採否をすべて学習した。lockboxは開いていない。
+
+事前固定した最小設定:
+
+```
+原子             業界/上場/特徴、survey 11問、numeric 12軸
+numeric変換      outer/inner train内の5-quantile bin
+候補             全2-way 325本
+選択             inner 3-fold APで単体screen上位40 -> greedy最大20本
+停止             greedy 1 stepのinner ΔAP < 0.001
+model            one-hot sparse Logistic Regression C=0.1
+outer評価        discovery 5-fold、seed=20260815
+```
+
+```
+                       AUC      AP       F1
+E7 cross              0.8709   0.6785   0.6667
+E0b linear            0.9198   0.7828   0.7448
+H42 AutoCross         0.8366   0.6228   0.6067
+exp032 discovery      0.9401   0.8256   0.7773
+exp032 + H42          0.9352   0.8073   0.7658
+差                    -0.0049  -0.0183  -0.0115
+```
+
+各foldは15〜20 crossを選び、inner ΔAPは +0.1340 / +0.1479 / +0.1484 /
++0.1248 / +0.1050と見かけ上大きかった。一方outer APは0.6668 / 0.8489 / 0.5957 /
+0.6134 / 0.5880と不安定で、選択集合の平均pairwise Jaccardは0.098しかなかった。
+5fold中4回選ばれたcrossも `アンケート4 x 営業利益率bin` の1本だけだった。
+
+候補はE7とSpearman 0.736、E0bと0.564で多様性はあったが、exp032追加のmeta weight
+9.9%は誤りを改善する方向へ働かなかった。FN 7件を救う一方で新FP 15件を作り、誤りは
+55件から63件へ増加。固定alphaでもΔAPは0.0000 / -0.0002 / -0.0008 / -0.0009で、
+auto-alphaだけの問題でもない。
+
+したがって **REJECT**。これは「inner CVで多数候補から大きく改善するcrossを選べても、
+n=482では選択自体が強く過学習する」という停止条件の実例。結果後に候補数、bin数、C、
+min gainを調整せず、3-way crossやlockbox、seed展開へは進まない。
+
+成果物:
+
+- `exp/auto_cross.py`
+- `exp/compare_auto_cross.py`
+- `exp/_autocross_discovery_seed20260815.npz`
+- `exp/_autocross_discovery_seed20260815.json`
+
+## 2026-08-15  R6 Nested Caruana GES → DiscoveryでREJECT
+
+固定Discovery上で同一splitに揃った15本のclean OOF予測をライブラリにした。
+
+```
+exp029 / exp031 / exp032
+E0 / E1 / E2 / E3 / E4 / E6 / E7 / E0b
+R1 target-aware text / R4 ModernNCA / H42 AutoCross / exp035 fixed kNN
+```
+
+R2 TabPFNは公式weight未取得のため候補なし。H33 multi-seed OOFは全742件CVで、
+Discovery行の学習にlockbox labelを含むため除外した。
+
+事前固定した選択規則:
+
+```
+objective          outer-train AP
+algorithm          replacementありCaruana forward selection
+max iterations     50
+prefix選択         outer-train AP最大（同値なら短いprefix）
+F1 guardrail       outer-trainでexp032のbest F1以上
+fallback           AP改善prefixがなければexp032単独
+outer evaluation   5-fold、validation labelは構成員・反復数選択に不使用
+```
+
+```
+                    AUC      AP       F1
+exp032 discovery   0.9401   0.8256   0.7773
+Nested GES         0.9302   0.8110   0.7574
+差                 -0.0098  -0.0146  -0.0199
+```
+
+outer-train APはfoldごとに 0.8105→0.8560 / 0.8255→0.8486 /
+0.8192→0.8692 / 0.8269→0.8712 / 0.8492→0.8933 とすべて改善した。しかし未参照の
+outer-validation ΔAPは +0.0062 / -0.0153 / -0.0183 / -0.0168 / -0.0294で、4/5悪化。
+training側のgreedy改善が汎化しなかった。
+
+構成員setの平均pairwise Jaccardは0.755、weight cosineは0.732で、splitごとに全面的に
+入れ替わったわけではない。平均weightはE4 20.4%、E2 11.4%、E0b 11.2%、exp035 10.4%、
+E1 9.9%、exp032 8.9%、R1 7.8%など。弱いが多様な予測へAP目的が重みを配りすぎ、
+exp032の強い正則化済みmetaを壊したと解釈する。
+
+最適閾値ではFNを2件救った一方、新FNを9件作り、誤りは55→57。したがって **REJECT**。
+iteration数、F1 tolerance、候補除外を結果後に調整せず、lockbox・提出には進まない。
+
+成果物:
+
+- `exp/nested_ges.py`
+- `exp/compare_nested_ges.py`
+- `exp/_r6_nested_ges_discovery_seed20260815.npz`
+- `exp/_r6_nested_ges_discovery_seed20260815.json`
+
+## 2026-08-15  H43 exp032-anchored R4二目的blend → 改善したがREJECT
+
+R4は全Discoveryのbest-threshold F1がexp032比+0.0081だった一方、APは-0.0115。
+GESはtrain APへ過適合した。この観察から、自由なGESではなくexp032の順位を80%以上残し、
+raw ModernNCAを最大20%だけ混ぜる低自由度blendを追加診断した。
+
+事前固定した規則:
+
+```
+p                = (1 - lambda) * exp032 + lambda * raw ModernNCA
+lambda grid      = 0 / 0.05 / 0.10 / 0.15 / 0.20
+選択             outer-train内3-foldのthreshold-transfer F1最大
+AP guardrail     inner mean APがexp032比 -0.002以内
+threshold        選択後outer-train全体で決め、outer-validationへ転送
+ACCEPT           Δtransfer F1 >= +0.005、AP >= -0.002、非zero lambda 3/5以上
+```
+
+```
+                 AUC      AP       global best F1   transferred F1
+exp032          0.9401   0.8256       0.7773           0.7559
+anchored R4     0.9367   0.8302       0.7819           0.7570
+差             -0.0033  +0.0046      +0.0046          +0.0011
+```
+
+lambdaは0.10 / 0.00 / 0.10 / 0.10 / 0.05で、4/5 foldがModernNCAを少量採用した。
+outer ΔAPは+0.0042 / 0.0000 / -0.0019 / -0.0261 / +0.0278、転送ΔF1は
+0.0000 / 0.0000 / +0.0141 / -0.0417 / +0.0344。誤りは62→61へ1件減った。
+
+したがって「exp032でglobal rankingを守り、R4を少量だけ境界補助にする」発想は、
+R4単純追加のAP -0.0115を+0.0046まで反転させる点では機能した。しかしF1改善は
+事前条件+0.005に届かず、fold 4の大幅悪化も残ったため **REJECT**。結果後にlambda grid、
+AP tolerance、F1条件を調整せず、lockbox・提出へは進まない。
+
+成果物:
+
+- `exp/compare_anchored_r4.py`
+- `exp/_h43_anchored_r4_discovery_seed20260815.npz`
+- `exp/_h43_anchored_r4_discovery_seed20260815.json`
+
+### ユーザー判断によるleaderboard challenger継続
+
+事前ACCEPT未達は維持したまま、本命exp032を上書きしない探索提出として全742件版を作った。
+Discoveryで選ばれたlambdaの平均 **0.07** を結果後に動かさず固定。ModernNCAは
+seed=20260815の5-fold OOF/test平均、exp032は既存seed42 full OOF/testを使用した。
+
+```
+full OOF          AUC      AP       F1       threshold
+exp032           0.9573   0.8768   0.8061    0.295
+93% base + 7% R4 0.9575   0.8777   0.8108    0.260
+差              +0.0001  +0.0009  +0.0047
+```
+
+提出予測は正例249件。exp032の236件から13件すべて `0→1` で、`1→0` は0件。
+これはRecall側へ寄せたchallengerであり、本命0.80000の置換ではない。Public確認後も
+lambdaや正例数を調整せず、この1点だけで判断する。
+
+提出物:
+
+- `submission/submission_exp032_anchor_r4_lam007_seed20260815.csv`
+- SHA-256: `19eb3d87f3a450edef66386e5b56c975e24e73eea7f8c84a1de5a4cbefc179d1`
+
+### Public結果: 0.7761194029850748 → challengerもREJECT確定
+
+本命exp032のPublic混同行列は TP=52 / FP=19 / FN=7（F1=0.80000）。challengerは
+test全体でexp032の0予測を13件追加し、1予測を削っていない。Publicスコアは
+
+```
+2 * 52 / (2 * 52 + 23 + 7) = 104 / 134 = 0.7761194029850746
+```
+
+と一致する。したがって13件の追加候補のうちPublic側に含まれた4件は **4件すべてFP**。
+TP/FNは変わらず、FPだけ19→23へ増えた。残るPrivate側9件の正解は不明だが、
+Discoveryの転送F1 +0.0011という弱い根拠とPublic 0/4を合わせ、challengerはREJECT確定。
+
+lambda、threshold、正例数をPublic結果に合わせて再調整しない。本命は
+`submission_exp032_seed42_20260815.csv`（Public 0.80000）のまま維持する。
+
+## 2026-08-15  H44 陽性数制約付きrank blend → PROMISING / challenger作成
+
+H43の失敗は、blend後のthreshold低下で予測陽性が236→249へ増え、変更13件が
+すべて `0→1` になった点にある。モデル合成自体と陽性数増加の効果を分離するため、
+exp032とraw ModernNCAのpercentile rankを混ぜ、候補の陽性数を必ずexp032と同じKに
+固定した。各foldで `0→1` と `1→0` が同数になる。
+
+事前固定した規則:
+
+```
+score            = (1 - lambda) * rank(exp032) + lambda * rank(raw ModernNCA)
+lambda grid      = 0 / 0.05 / 0.10 / 0.15 / 0.20 / 0.30
+K                = outer-trainで学習したexp032 thresholdをouter-validへ転送した陽性数
+candidate label  = rank blendの上位K件
+lambda選択       = inner 3-foldの同一K F1最大（AP -0.002 guardrail）
+ACCEPT           = Δ同一K F1 >= +0.005、AP >= -0.002、非zero lambda 3/5以上、
+                   単一fold F1低下が-0.02以内
+```
+
+Discovery nested結果:
+
+```
+                       AUC      AP       global best F1   同一K F1
+exp032                0.9401   0.8256       0.7773         0.7559
+fixed-K rank blend    0.9381   0.8405       0.7778         0.7638
+差                   -0.0019  +0.0149      +0.0005        +0.0079
+```
+
+lambdaは0.15 / 0.15 / 0.10 / 0.10 / 0.10で全5 foldがR4を採用。fold別F1差は
+0.0000 / +0.0357 / 0.0000 / 0.0000 / 0.0000で、悪化foldはなかった。陽性数は
+両者138件、変更は `0→1` 4件 / `1→0` 4件。FN rescue 2、新FN 1、FP除去3、
+新FP 2となり、誤りは62→60へ減少した。事前条件をすべて満たすため **PROMISING**。
+
+提出用lambdaはnested 5-fold選択値の平均0.12を固定。全742件OOFの参考値は
+AP -0.0016、global best F1 +0.0100。exp032のOOF最適K=213では同一K F1 -0.0051
+だったが、実際の提出数K=236ではF1 0.7904→0.7952（+0.0048）。主要な採否根拠は
+あくまで事前規則どおりのDiscovery nested結果とし、full OOFでlambda/Kを動かしていない。
+
+testは本命と同じ正例236件。10件を `0→1`、別の10件を `1→0` に交換した。
+Public 0.776119の結果から変更IDを選別せず、本命exp032（Public 0.80000）は維持する。
+
+成果物:
+
+- `exp/compare_prevalence_rank_blend.py`
+- `exp/_h44_prevalence_rank_blend_discovery_seed20260815.npz`
+- `exp/_h44_prevalence_rank_blend_discovery_seed20260815.json`
+- `exp/make_submission_prevalence_rank_blend.py`
+- `submission/submission_exp032_rankblend_r4_lam012_top236_seed20260815.csv`
+- SHA-256: `9396b4435c4f3a138f24b0b704adf5b5f39efef6972a7a46a33a0f5e12570bbb`
+
+## 2026-08-15  H45 境界限定R4/R1双方向swap → REJECT
+
+H44の固定Kを維持したまま、exp032の転送threshold境界からB件だけを候補にし、
+R4 ModernNCAとR1 target-aware textのrank合意で `0→1` / `1→0` を同数交換する
+低自由度案をNested評価した。重み、境界幅B、交換数mはinner 3-foldで選択し、
+AP guardrailと単一fold F1悪化条件はH44から維持した。
+
+```
+                         AUC      AP       固定K F1
+exp032                  0.9401   0.8256    0.7559
+H45 boundary swap       0.9376   0.8237    0.7087
+差                      -0.0025  -0.0019   -0.0472
+```
+
+fold別F1差は -0.0851 / 0.0000 / 0.0000 / 0.0000 / -0.1667。誤りは62→74へ増加し、
+FN rescue 4に対して新FN 10・新FP 13を作った。各方向17件の交換で陽性数は維持したが、
+境界限定とR1の併用は安定しなかった。R1は全体APが弱いだけでなく、boundaryのswap
+selectorとしても採用根拠を失ったため **REJECT**。提出ファイルは作成しない。
+
+成果物:
+
+- `exp/compare_boundary_swap_h45.py`
+- `exp/_h45_boundary_swap_discovery_seed20260815.npz`
+- `exp/_h45_boundary_swap_discovery_seed20260815.json`
+
+## 2026-08-15  H46 H44 R4 rank blendの交換数cap → REJECT
+
+H44ではDiscoveryの交換4件に対してtestで10件ずつ交換されたため、R4-onlyの固定K
+rank blendに交換数mの上限を導入した。λとmをinner 3-foldで選び、候補はbaseの
+0/1群からR4 rankの上位/下位m件だけを交換する。R1は使用していない。
+
+```
+                 AUC      AP       固定K F1
+exp032          0.9401   0.8256    0.7559
+H46             0.9384   0.8361    0.7559
+差              -0.0017  +0.0105   0.0000
+```
+
+fold別F1差は +0.0426 / 0.0000 / 0.0000 / 0.0000 / -0.0417。誤りは62→62、
+FN rescue 4、新FN 4、FP除去7、新FP7で相殺された。交換は各方向11件。APは改善したが、
+F1事前条件+0.005と単一fold悪化条件を満たさないため **REJECT**。提出は作成せず、
+H44のlambda=0.12候補を現時点のローカル最良として維持する。
+
+成果物:
+
+- `exp/compare_swap_cap_h46.py`
+- `exp/_h46_swap_cap_discovery_seed20260815.npz`
+- `exp/_h46_swap_cap_discovery_seed20260815.json`
+
+## 2026-08-16  H44 challenger の Public 実測: 0.781955 → 第2枠として保持、本命は据え置き
+
+`submission_exp032_rankblend_r4_lam012_top236_seed20260815.csv` の Public は
+**0.7819548872180452**。`documents/experiments.md` のメモ節の手順で復元する。
+
+```
+Fraction(0.7819548872180452).limit_denominator(2000) = 104/133
+F1 = 2TP / (公開予測正例 + 59) を満たす整数解は (TP, 公開予測正例) = (52, 74) のみ
+```
+
+```
+                  TP   FP   FN   公開予測正例   Public F1
+exp032            52   19    7        71        0.80000
+H44 challenger    52   22    7        74        0.781955
+差                 0   +3    0        +3        -0.018045
+```
+
+**TPは1件も動いていない。増えたのはFPだけで+3件。**
+
+test全体では `0→1` 10件・`1→0` 10件で陽性数236を厳密に固定していたが、Public 240行という
+部分集合の中では `0→1` が `1→0` より3件多く落ちた（71→74）。**陽性数の固定はtest全体でしか
+保証されず、Public/Privateの部分集合では非対称に崩れる。** これはH44の設計上の欠陥ではなく、
+分割が非公開である以上どの固定K手法にも共通する性質なので、則9の但し書きとして記録する。
+
+またTP変化がゼロということは、Public側に落ちた交換行では救出と取りこぼしが同数（おそらく
+両方ゼロ）＝ **交換行はPublic上で一つも当たっていない**。H43の「追加4件が全部FP」と合わせ、
+raw ModernNCAの順位はPublic上で2回連続して価値を出していない。
+
+判定:
+
+- **本命は `submission_exp032_seed42_20260815.csv`（Public 0.80000）のまま据え置く。**
+- **H44は第2枠として保持する。** Public差 -0.0181 は実測std 0.043 の内側で、これ単体では
+  REJECT根拠にならない。Privateスコアの高い方が自動採用されるため保持コストはゼロであり、
+  事前規則（Discovery nested の ΔAP +0.0149 / 同一K F1 +0.0079、悪化foldなし）を通過した
+  唯一の候補である。
+- Private側には `1→0` が3件多く残る。testの実正例率は公開から逆算して約24.6%（約197行）で
+  本命の236件は正例側へ過剰なので、方向としては悪くない。ただしPublicの交換が全外れである以上、
+  積極的な追い風とも読まない。
+- **Public結果を見てlambda、K、閾値、交換対象IDを再調整しない。** H43と同じ理由で、
+  240行・TP1行単位の情報に合わせにいくと確実に過学習する。
+
+より良いchallengerが出た場合のみ第2枠を差し替える。差し替えの判断はDiscovery nested と
+lockbox で行い、Public値では行わない。
