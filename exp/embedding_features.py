@@ -70,6 +70,10 @@ CONCAT_EMB_DIM, CONCAT_EMB_C = 1024, 1.0
 H30_ABSDIFF_SLUGS = ("org", "overview", "dx_outlook")
 H30_ABSDIFF_DIM, H30_ABSDIFF_C = 256, 1.0
 
+# 先頭k次元の切り詰め（Matryoshka）が許されるモデル。BERT系はここに入らない。
+# 新しい npz は meta に `mrl=0/1` を持つので、そちらが優先される。
+MRL_MODELS = ("text-embedding-3-large", "text-embedding-3-small")
+
 _CACHE = {}
 
 
@@ -93,12 +97,31 @@ def _load_raw(slug, model):
                 f"npz を取得し、data/ か exp/ に置くこと。"
             )
         d = np.load(path, allow_pickle=True)
-        _CACHE[key] = (d["train"], d["test"], d["train_ids"], d["test_ids"])
+        meta = list(d["meta"]) if "meta" in d else []
+        _CACHE[key] = (d["train"], d["test"], d["train_ids"], d["test_ids"], meta)
     return _CACHE[key]
 
 
+def is_matryoshka(model, meta=()):
+    """先頭k次元の切り詰めが許されるモデルか。
+
+    npz の meta に `mrl=0/1` があればそれが答え（生成側が知っている）。
+    無い古い npz（OpenAI分）はモデル名で判定する。
+    """
+    for m in meta:
+        s = str(m)
+        if s.startswith("mrl="):
+            return s == "mrl=1"
+    return model in MRL_MODELS
+
+
 def truncate(mat, dim):
-    """Matryoshka 切り詰め: 先頭 dim 次元を取って L2 再正規化する。"""
+    """Matryoshka 切り詰め: 先頭 dim 次元を取って L2 再正規化する。
+
+    **MRL学習済みモデルにしか使ってはいけない。** BERT系の次元には順序の意味が
+    無いので、先頭k次元を取るのはただの情報の切り捨てになる。呼び出し元の
+    `load_embeddings` が非MRLモデルに対して例外を投げる。
+    """
     if dim is None or dim >= mat.shape[1]:
         return mat
     sub = mat[:, :dim]
@@ -111,7 +134,12 @@ def load_embeddings(slug, dim=EMB_DIM, model=DEFAULT_MODEL, verify=True):
     verify=True のとき企業IDの並びを CSV と突き合わせる。npz を作り直したときの
     行ズレは静かに効いて全ての比較を壊すので、既定で毎回確認する。
     """
-    tr, te, tr_ids, te_ids = _load_raw(slug, model)
+    tr, te, tr_ids, te_ids, meta = _load_raw(slug, model)
+    if dim is not None and dim < tr.shape[1] and not is_matryoshka(model, meta):
+        raise ValueError(
+            f"{model} は Matryoshka ではないので dim={dim} への切り詰めは無意味"
+            f"（{tr.shape[1]}次元の先頭だけを取ることになる）。dim=None を渡すこと。"
+        )
     if verify:
         for split, ids in (("train", tr_ids), ("test", te_ids)):
             csv = pd.read_csv(f"data/{split}.csv", usecols=["企業ID"])["企業ID"].values
@@ -229,9 +257,15 @@ def main():
         full, _ = load_embeddings(a.slug, dim=None, model=a.model)
         print(f"{name}: {full.shape}  正例率 {y.mean():.4f}")
 
+    # 非MRLモデル（BERT系）は次元をハイパラにできない。素の次元1本だけ回す。
+    meta = _load_raw(a.concat[0] if a.concat else a.slug, a.model)[4]
+    dims = a.dims if is_matryoshka(a.model, meta) else [None]
+    if dims == [None]:
+        print(f"  ({a.model} は非Matryoshka: 切り詰めずに{full.shape[1]}次元で評価)")
+
     rows = []
-    for dim in a.dims:
-        if dim > full.shape[1]:
+    for dim in dims:
+        if dim is not None and dim > full.shape[1]:
             continue
         mat = (load_concat_embeddings(tuple(a.concat), dim=dim, model=a.model)[0]
                if a.concat else truncate(full, dim))
