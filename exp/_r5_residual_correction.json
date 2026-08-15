@@ -1,0 +1,88 @@
+{
+  "seed": 20260815,
+  "alpha": 0.1,
+  "feature_names": [
+    "base_probability",
+    "base_entropy",
+    "expert_std",
+    "expert_range",
+    "E3_minus_E4",
+    "E7_minus_E0",
+    "E0b_minus_E0",
+    "E2_minus_E1",
+    "abs_margin_to_train_threshold",
+    "cross_fitted_error_probability"
+  ],
+  "base_score": {
+    "auc": 0.9400555869606181,
+    "ap": 0.82559332412096,
+    "f1": 0.7773279352226721,
+    "th": 0.34499999999999986
+  },
+  "corrected_score": {
+    "auc": 0.9360043338986244,
+    "ap": 0.8101026990320371,
+    "f1": 0.7729083665338645,
+    "th": 0.33999999999999986
+  },
+  "delta": {
+    "auc": -0.00405125306199372,
+    "ap": -0.01549062508892285,
+    "f1": -0.004419568688807551
+  },
+  "errors": {
+    "base_errors": 55,
+    "corrected_errors": 57,
+    "fn_rescued": 4,
+    "new_fn": 3,
+    "fp_removed": 1,
+    "new_fp": 4,
+    "label_disagreement": 12
+  },
+  "mean_weights": {
+    "base_probability": 0.08030002866912186,
+    "base_entropy": 0.08149262301201368,
+    "expert_std": 0.054858966415204255,
+    "expert_range": 0.023005004435219988,
+    "E3_minus_E4": -0.022678446121945542,
+    "E7_minus_E0": 0.02057361213448363,
+    "E0b_minus_E0": 0.08005503566130379,
+    "E2_minus_E1": -0.017094140832724185,
+    "abs_margin_to_train_threshold": -0.004828266622468174,
+    "cross_fitted_error_probability": 0.0994422228630397
+  },
+  "folds": [
+    {
+      "fold": 1,
+      "base_threshold_train": 0.34499999999999986,
+      "base_ap_valid": 0.8888348481295774,
+      "corrected_ap_valid": 0.8719142369583941
+    },
+    {
+      "fold": 2,
+      "base_threshold_train": 0.31999999999999984,
+      "base_ap_valid": 0.8588664587384948,
+      "corrected_ap_valid": 0.8529951019013519
+    },
+    {
+      "fold": 3,
+      "base_threshold_train": 0.3099999999999999,
+      "base_ap_valid": 0.8607341946534429,
+      "corrected_ap_valid": 0.8646447688227008
+    },
+    {
+      "fold": 4,
+      "base_threshold_train": 0.34499999999999986,
+      "base_ap_valid": 0.8267737104303585,
+      "corrected_ap_valid": 0.8276196923219608
+    },
+    {
+      "fold": 5,
+      "base_threshold_train": 0.3049999999999999,
+      "base_ap_valid": 0.76004591312102,
+      "corrected_ap_valid": 0.7448241136865623
+    }
+  ],
+  "verdict": "REJECT: correction路線を終了",
+  "lockbox_opened": false
+}

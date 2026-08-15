@@ -1,0 +1,71 @@
+{
+  "seed": 20260815,
+  "n_discovery": 482,
+  "n_errors": 62,
+  "error_rate": 0.12863070539419086,
+  "feature_names": [
+    "base_probability",
+    "base_entropy",
+    "expert_std",
+    "expert_range",
+    "E3_minus_E4",
+    "E7_minus_E0",
+    "E0b_minus_E0",
+    "E2_minus_E1",
+    "abs_margin_to_train_threshold"
+  ],
+  "model": "StandardScaler + balanced LogisticRegression(C=0.1)",
+  "error_auc": 0.8398617511520737,
+  "error_ap": 0.34458249134245983,
+  "confidence_only_auc": 0.7469662058371735,
+  "increment_over_confidence": 0.09289554531490019,
+  "shuffle_auc_mean": 0.4497983870967741,
+  "shuffle_auc_std": 0.09356684153159871,
+  "shuffle_auc_max": 0.591589861751152,
+  "residual_r2": -0.08172493955368365,
+  "residual_spearman": -0.1409947693548632,
+  "folds": [
+    {
+      "fold": 1,
+      "threshold": 0.34499999999999986,
+      "n_error_train": 46,
+      "n_error_valid": 9,
+      "error_auc": 0.9318181818181819,
+      "confidence_auc": 0.8320707070707071
+    },
+    {
+      "fold": 2,
+      "threshold": 0.31999999999999984,
+      "n_error_train": 41,
+      "n_error_valid": 16,
+      "error_auc": 0.841820987654321,
+      "confidence_auc": 0.8456790123456789
+    },
+    {
+      "fold": 3,
+      "threshold": 0.3099999999999999,
+      "n_error_train": 45,
+      "n_error_valid": 13,
+      "error_auc": 0.8646895273401298,
+      "confidence_auc": 0.6098239110287302
+    },
+    {
+      "fold": 4,
+      "threshold": 0.34499999999999986,
+      "n_error_train": 41,
+      "n_error_valid": 14,
+      "error_auc": 0.8536585365853658,
+      "confidence_auc": 0.8249128919860627
+    },
+    {
+      "fold": 5,
+      "threshold": 0.3049999999999999,
+      "n_error_train": 50,
+      "n_error_valid": 10,
+      "error_auc": 0.7313953488372094,
+      "confidence_auc": 0.6488372093023256
+    }
+  ],
+  "lockbox_opened": false,
+  "verdict": "PASS: R5 correctionへ進む（signed Ridgeは不発のため、base-logit offset型だけを試す）"
+}

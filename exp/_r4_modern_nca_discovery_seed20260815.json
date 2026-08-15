@@ -1,0 +1,240 @@
+{
+  "implementation_reference": "https://github.com/LAMDA-Tabular/TALENT/tree/main/TALENT/model",
+  "config": {
+    "dim": 128,
+    "dropout": 0.1,
+    "d_block": 512,
+    "n_blocks": 0,
+    "temperature": 1.0,
+    "n_frequencies": 77,
+    "frequency_scale": 0.04431360576139521,
+    "d_embedding": 34,
+    "sample_rate": 0.5,
+    "learning_rate": 0.01,
+    "weight_decay": 0.0002,
+    "epochs": 80,
+    "batch_size": 64,
+    "threads": 4
+  },
+  "seed": 20260815,
+  "n_discovery": 482,
+  "scores": {
+    "exp035_fixed_knn": {
+      "auc": 0.8213444507254569,
+      "ap": 0.5847204033646938,
+      "f1": 0.6153846153846154,
+      "th": 0.2549999999999999
+    },
+    "E0_anchor": {
+      "auc": 0.8840446579988694,
+      "ap": 0.748048212444331,
+      "f1": 0.6666666666666666,
+      "th": 0.19499999999999995
+    },
+    "E0b_linear": {
+      "auc": 0.9197522140569059,
+      "ap": 0.7827582219836335,
+      "f1": 0.7447698744769874,
+      "th": 0.37999999999999984
+    },
+    "E10_modern_nca": {
+      "auc": 0.6789381948370077,
+      "ap": 0.3941614205251257,
+      "f1": 0.44813278008298757,
+      "th": 0.12999999999999995
+    },
+    "exp032": {
+      "auc": 0.9400555869606181,
+      "ap": 0.82559332412096,
+      "f1": 0.7773279352226721,
+      "th": 0.34499999999999986
+    },
+    "exp032+modern_nca": {
+      "auc": 0.9388307895232711,
+      "ap": 0.8140749778137025,
+      "f1": 0.7854251012145749,
+      "th": 0.32499999999999984
+    }
+  },
+  "delta_vs_exp032": {
+    "auc": -0.0012247974373469361,
+    "ap": -0.011518346307257454,
+    "f1": 0.0080971659919028
+  },
+  "spearman": {
+    "exp035_fixed_knn": 0.08385131361113787,
+    "E0_anchor": 0.2470256552688196,
+    "E0b_linear": 0.25580645819833536,
+    "exp032": 0.30167463468529315
+  },
+  "errors": {
+    "base_errors": 55,
+    "candidate_errors": 53,
+    "fn_rescued": 2,
+    "new_fn": 1,
+    "fp_removed": 4,
+    "new_fp": 3,
+    "label_disagreement": 10
+  },
+  "target_weight": 0.017088820084027546,
+  "alphas": [
+    0.001,
+    0.1,
+    0.03,
+    0.1,
+    0.003
+  ],
+  "fold_diagnostics": [
+    {
+      "config": {
+        "dim": 128,
+        "dropout": 0.1,
+        "d_block": 512,
+        "n_blocks": 0,
+        "temperature": 1.0,
+        "n_frequencies": 77,
+        "frequency_scale": 0.04431360576139521,
+        "d_embedding": 34,
+        "sample_rate": 0.5,
+        "learning_rate": 0.01,
+        "weight_decay": 0.0002,
+        "epochs": 80,
+        "batch_size": 64,
+        "threads": 4
+      },
+      "n_num": 44,
+      "n_cat_onehot": 38,
+      "parameters": 205138,
+      "initial_loss": 0.6354284882545471,
+      "final_loss": 0.5492896416357586,
+      "min_loss": 0.19590957356350763,
+      "top1_same_label": 0.7835051546391752,
+      "fold": 1,
+      "seconds": 19.453845500946045,
+      "ap": 0.5252586404719956,
+      "auc": 0.7403055229142186,
+      "fixed_knn_ap": 0.5632130510618616
+    },
+    {
+      "config": {
+        "dim": 128,
+        "dropout": 0.1,
+        "d_block": 512,
+        "n_blocks": 0,
+        "temperature": 1.0,
+        "n_frequencies": 77,
+        "frequency_scale": 0.04431360576139521,
+        "d_embedding": 34,
+        "sample_rate": 0.5,
+        "learning_rate": 0.01,
+        "weight_decay": 0.0002,
+        "epochs": 80,
+        "batch_size": 64,
+        "threads": 4
+      },
+      "n_num": 44,
+      "n_cat_onehot": 38,
+      "parameters": 205138,
+      "initial_loss": 0.676823650087629,
+      "final_loss": 0.21559762129826204,
+      "min_loss": 0.04646254317568881,
+      "top1_same_label": 0.7216494845360825,
+      "fold": 2,
+      "seconds": 15.34679627418518,
+      "ap": 0.5179604555069287,
+      "auc": 0.7171803652968036,
+      "fixed_knn_ap": 0.6787119909333379
+    },
+    {
+      "config": {
+        "dim": 128,
+        "dropout": 0.1,
+        "d_block": 512,
+        "n_blocks": 0,
+        "temperature": 1.0,
+        "n_frequencies": 77,
+        "frequency_scale": 0.04431360576139521,
+        "d_embedding": 34,
+        "sample_rate": 0.5,
+        "learning_rate": 0.01,
+        "weight_decay": 0.0002,
+        "epochs": 80,
+        "batch_size": 64,
+        "threads": 4
+      },
+      "n_num": 44,
+      "n_cat_onehot": 38,
+      "parameters": 205138,
+      "initial_loss": 0.6331082156726292,
+      "final_loss": 0.697559233222689,
+      "min_loss": 0.07428103499114513,
+      "top1_same_label": 0.6979166666666666,
+      "fold": 3,
+      "seconds": 17.85301399230957,
+      "ap": 0.34859105545389324,
+      "auc": 0.6545562835020846,
+      "fixed_knn_ap": 0.6355517062437405
+    },
+    {
+      "config": {
+        "dim": 128,
+        "dropout": 0.1,
+        "d_block": 512,
+        "n_blocks": 0,
+        "temperature": 1.0,
+        "n_frequencies": 77,
+        "frequency_scale": 0.04431360576139521,
+        "d_embedding": 34,
+        "sample_rate": 0.5,
+        "learning_rate": 0.01,
+        "weight_decay": 0.0002,
+        "epochs": 80,
+        "batch_size": 64,
+        "threads": 4
+      },
+      "n_num": 44,
+      "n_cat_onehot": 36,
+      "parameters": 204882,
+      "initial_loss": 0.6356436780520848,
+      "final_loss": 0.7130544228213174,
+      "min_loss": 0.11098702118865081,
+      "top1_same_label": 0.6875,
+      "fold": 4,
+      "seconds": 15.851039171218872,
+      "ap": 0.3013783706479447,
+      "auc": 0.610184633710542,
+      "fixed_knn_ap": 0.6379712457354056
+    },
+    {
+      "config": {
+        "dim": 128,
+        "dropout": 0.1,
+        "d_block": 512,
+        "n_blocks": 0,
+        "temperature": 1.0,
+        "n_frequencies": 77,
+        "frequency_scale": 0.04431360576139521,
+        "d_embedding": 34,
+        "sample_rate": 0.5,
+        "learning_rate": 0.01,
+        "weight_decay": 0.0002,
+        "epochs": 80,
+        "batch_size": 64,
+        "threads": 4
+      },
+      "n_num": 44,
+      "n_cat_onehot": 38,
+      "parameters": 205138,
+      "initial_loss": 0.6450186967849731,
+      "final_loss": 0.5585747616631644,
+      "min_loss": 0.07381756816591535,
+      "top1_same_label": 0.7395833333333334,
+      "fold": 5,
+      "seconds": 18.17346477508545,
+      "ap": 0.368741688485934,
+      "auc": 0.6599166170339488,
+      "fixed_knn_ap": 0.5677955825788987
+    }
+  ],
+  "lockbox_opened": false
+}

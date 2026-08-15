@@ -5,3 +5,18 @@
 
 catboost==1.2.10   # make_submission_ensemble.py。現在は未採用（exp012 で REJECT）
 openai==2.8.1      # colab_openai_embed.py。埋め込み生成用で、通常は使わない
+
+# local_bert_embed.py（日本語BERT埋め込み）。npz を作るときだけ必要で、
+# 出来た npz を使う側（exp/ 以下の検証）には一切要らない。
+# torch は CPU版で十分（1542文書しかない）:
+#   pip install --user torch --index-url https://download.pytorch.org/whl/cpu
+torch==2.13.0            # CPU wheel
+transformers==5.15.0
+huggingface-hub==1.27.0
+fugashi==1.5.2           # tohoku-bert-v3 の MeCab トークナイザに必要
+unidic-lite==1.0.8       # 同上（辞書が変わるとトークン分割が変わるので固定）
+
+# R2 structured-only TabPFN。外部pretrained weightを使うため、大会画面上の
+# 利用規約を確認できるまで提出候補へは昇格させない。
+tabpfn==8.3.0
+einops==0.8.2
