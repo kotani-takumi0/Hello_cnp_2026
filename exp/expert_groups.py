@@ -15,11 +15,13 @@
     再構築できないので比は効くが、E0 上での比の追加は H2/H3/H7 で3回却下されて
     いる。詳細は finance_ratio_features.py の docstring。
 """
+from cross_features import ALL_CROSS_COLS
 from finance_ratio_features import FINANCE_RATIO_COLS
 from survey_features import ALL_DERIVED_COLS, STEP_COLS
 
 # E0(アンカー94列)に混ぜてはいけない、特定エキスパート専用の派生列。
-EXPERT_ONLY_COLS = tuple(FINANCE_RATIO_COLS) + tuple(ALL_DERIVED_COLS)
+EXPERT_ONLY_COLS = (tuple(FINANCE_RATIO_COLS) + tuple(ALL_DERIVED_COLS)
+                    + tuple(ALL_CROSS_COLS))
 
 FINANCE_COLS = (
     "資本金", "総資産", "流動資産", "固定資産", "負債", "短期借入金", "長期借入金",
@@ -70,6 +72,17 @@ def e2_survey_cols(with_step=False):
     """
     cols = list(SURVEY_COLS + SURVEY_ISNA_COLS)
     return cols + list(STEP_COLS) if with_step else cols
+
+
+def e7_cross_cols():
+    """E7 不満+財務の低次元専門家12列（親7 + 積5、H27 / exp030）。
+
+    名称は再現性のためcrossのままだが、事後アブレーションでは親7列だけで
+    AP 0.6853、全12列で0.6859。成功の本体は積ではなく、E1/E2が個別には持たない
+    不満集約・財務比率を低次元LRへまとめたこと。既存6本の入力列は変えない。
+    詳細は cross_features.py の docstring。
+    """
+    return list(ALL_CROSS_COLS)
 
 
 def e6_manual_cols(all_cols):

@@ -1,7 +1,22 @@
 """再利用可能な評価ハーネス。
 1仮説ずつ検証するための共通土台。baseline.ipynb のモデルを忠実に再現し、
 複数seedで回して OOF指標の mean±std（＝ノイズ幅）を返す。
+
+スレッド数について（2026-08-14、exp030 で踏んだ）
+--------------------------------------------------
+n=742・p=94 は **スレッドを増やすほど遅くなる**領域にある。742行を16スレッドに割ると
+1スレッド46行で、ノードごとの待ち合わせコストのほうが計算より大きい。しかも
+LightGBM の OpenMP プールと numpy/BLAS のプールが**それぞれコア数ぶん**確保するので
+1プロセス47スレッドになり、2ジョブ並べると 94スレッド/16コア でスラッシングする
+（実測: CPU時間79分に対し wall 9.5分で rep1/5 すら未完 ＝ CPUの8割がスピンウェイト）。
+
+`num_threads=4` にすると1回のエキスパート学習が5.5秒になり、15repホールドアウトが
+7分で終わる（**CPUは7分の1しか使わずに17倍速い**）。
+結果は変わらないことを `repro_check.py` で確認済み（最大 4.9e-15 の丸め差、提出ラベル差0行）。
+コア数の多いマシンで上書きしたいときは環境変数 `SIGNATE_LGB_THREADS` で指定する。
 """
+import os
+
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
@@ -16,10 +31,14 @@ CAT_COLS = ["業界", "上場種別", "特徴"]
 ZERO_FILL = ["事業所数", "工場数", "店舗数", "アンケート７"]
 FLAG_ONLY = ["資本金", "営業利益", "経常利益"]
 
+# 学習には影響しない実行時パラメータ（上の docstring 参照）。
+LGB_THREADS = int(os.environ.get("SIGNATE_LGB_THREADS", "4"))
+
 BASE_PARAMS = dict(
     objective="binary", metric="binary_logloss", learning_rate=0.03,
     num_leaves=15, min_child_samples=20, feature_fraction=0.8,
     bagging_fraction=0.8, bagging_freq=1, lambda_l2=1.0, verbosity=-1,
+    num_threads=LGB_THREADS,
 )
 
 

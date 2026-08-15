@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "purpose": "future_feature_increment_only",
+  "seed": 20260815,
+  "splitter": "sklearn.train_test_split(stratify=y)",
+  "n_total": 742,
+  "n_discovery": 482,
+  "n_lockbox": 260,
+  "lockbox_id_sha256": "7fec676957d6169e88a9b84133c5d9b06119753c2d5a9122b2b0725239334355",
+  "model": "exp032-like: concatemb + E7 LR + E0b LR(C=0.03)",
+  "policy": "Do not inspect or export lockbox IDs, labels, predictions, or row-level errors before preregistration.",
+  "outputs": [
+    "exp/_lockbox_discovery_errors.csv",
+    "documents/error_analysis_discovery.md"
+  ]
+}
