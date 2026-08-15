@@ -56,6 +56,20 @@ EMB_DIM = 512  # 暫定値。単体CVで決めてから固定すること
 #   現行TF-IDFとのOOF相関 0.560（exp021 の却下線 0.927 とは別物）
 ORG_EMB_DIM, ORG_EMB_C = 1024, 1.0
 
+# E4 を [組織図 ; 企業概要] の連結にする案（H26 / exp029）の設定。
+# 単体CVグリッド(seed=42)より: AUC .7056 / AP .4142
+#   （org単体 .6796/.3833、overview単体 .6905/.3979 のどちらより上）
+# **ORG_EMB_DIM / ORG_EMB_C とわざと同じ値にしてある**。こうすると現行E4との差が
+# 「overviewブロックを連結したか」だけになり、dim や C の違いが交絡しない。
+# dim=3072 は AP .4143 で +0.0001 ＝ ノイズなので、次元を3倍にする理由が無い。
+CONCAT_SLUGS = ("org", "overview")
+CONCAT_EMB_DIM, CONCAT_EMB_C = 1024, 1.0
+
+# H30: 3文書間の意味的な不一致を絶対差で表す独立エキスパート。
+# quick screen で4候補中もっとも合成OOFの増分が大きかった設定を固定する。
+H30_ABSDIFF_SLUGS = ("org", "overview", "dx_outlook")
+H30_ABSDIFF_DIM, H30_ABSDIFF_C = 256, 1.0
+
 _CACHE = {}
 
 
@@ -110,6 +124,46 @@ def load_by_col(col, dim=EMB_DIM, model=DEFAULT_MODEL):
     return load_embeddings(SLUG_BY_COL[col], dim=dim, model=model)
 
 
+def load_concat_embeddings(slugs=CONCAT_SLUGS, dim=EMB_DIM, model=DEFAULT_MODEL):
+    """複数列の埋め込みを横に連結して (train行列, test行列) を返す。
+
+    **各ブロックを先に truncate（= L2正規化）してから連結し、最後に行全体を
+    もう一度 L2 正規化する。** 順序に意味がある:
+
+      - ブロックごとの正規化 = どちらの列も同じ重みで入る。片方の文章が長くて
+        ノルムが大きい、といった理由で寄与が偏らない。
+      - 最後の全体正規化 = 行のノルムが 1 に揃うので、`build_embed_model` の
+        「L2正規化済みだから StandardScaler を挟まない」前提と C の意味が
+        単一ブロックのときと揃う。これをやらないとノルムが sqrt(len(slugs)) 倍になり、
+        同じ C が実質 len(slugs) 倍の緩さになって単体CVの結果と比較できない。
+
+    行順は data/train.csv, data/test.csv と一致する（各 npz を verify 済み）。
+    """
+    blocks = [load_embeddings(s, dim=dim, model=model) for s in slugs]
+    out = []
+    for i in range(2):  # 0=train, 1=test
+        m = np.hstack([b[i] for b in blocks])
+        out.append(m / np.linalg.norm(m, axis=1, keepdims=True))
+    return out[0], out[1]
+
+
+def load_absdiff_embeddings(dim=H30_ABSDIFF_DIM, model=DEFAULT_MODEL):
+    """H30の3文書間絶対差を連結し、行L2正規化して返す。"""
+    blocks = {
+        slug: load_embeddings(slug, dim=dim, model=model)
+        for slug in H30_ABSDIFF_SLUGS
+    }
+    out = []
+    for split in range(2):
+        org = blocks["org"][split]
+        overview = blocks["overview"][split]
+        dx = blocks["dx_outlook"][split]
+        matrix = np.hstack((np.abs(dx - org), np.abs(dx - overview),
+                            np.abs(org - overview)))
+        out.append(matrix / np.linalg.norm(matrix, axis=1, keepdims=True))
+    return out[0], out[1]
+
+
 def build_embed_model(params=None):
     """文字列ではなく埋め込み行列を受け取る LR。`text_features.build_model` の代替。
 
@@ -155,6 +209,9 @@ def main():
     warnings.filterwarnings("ignore")
     p = argparse.ArgumentParser()
     p.add_argument("--slug", default="dx_outlook", choices=list(SLUG_BY_COL.values()))
+    p.add_argument("--concat", nargs="+", default=None,
+                   choices=list(SLUG_BY_COL.values()),
+                   help="複数列を連結した1本として評価する（例: --concat org overview）")
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--dims", nargs="+", type=int, default=[256, 512, 1024, 3072])
     p.add_argument("--cs", nargs="+", type=float, default=[0.03, 0.1, 0.3, 1.0, 3.0])
@@ -162,14 +219,22 @@ def main():
     a = p.parse_args()
 
     y = pd.read_csv("data/train.csv")["購入フラグ"].values
-    full, _ = load_embeddings(a.slug, dim=None, model=a.model)
-    print(f"{a.slug}: {full.shape}  正例率 {y.mean():.4f}")
+    name = "+".join(a.concat) if a.concat else a.slug
+    if a.concat:
+        # 連結は dim がブロックごとに効くので、行列は dim ごとに作り直す
+        full, _ = load_embeddings(a.concat[0], dim=None, model=a.model)
+        print(f"{name}: ブロック{len(a.concat)}本 x 最大{full.shape[1]}次元"
+              f"  正例率 {y.mean():.4f}")
+    else:
+        full, _ = load_embeddings(a.slug, dim=None, model=a.model)
+        print(f"{name}: {full.shape}  正例率 {y.mean():.4f}")
 
     rows = []
     for dim in a.dims:
         if dim > full.shape[1]:
             continue
-        mat = truncate(full, dim)
+        mat = (load_concat_embeddings(tuple(a.concat), dim=dim, model=a.model)[0]
+               if a.concat else truncate(full, dim))
         for c in a.cs:
             s, _ = _cv_scores(mat, y, {**EMB_LR_PARAMS, "C": c}, seed=a.seed)
             rows.append(dict(dim=dim, C=c, **s))
@@ -177,7 +242,7 @@ def main():
                   f"  F1 {s['f1']:.4f} @ {s['th']:.3f}", flush=True)
 
     df = pd.DataFrame(rows).sort_values("ap", ascending=False)
-    out = os.path.join(EXP_DIR, f"_emb_cv_{a.slug}.csv")
+    out = os.path.join(EXP_DIR, f"_emb_cv_{name.replace('+', '_')}.csv")
     df.to_csv(out, index=False)
     print(f"\n=== AP上位 ===\n{df.head(5).to_string(index=False)}")
     print(f"保存: {out}")

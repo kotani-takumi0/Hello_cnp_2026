@@ -1,11 +1,16 @@
-# --- コンペ配布データ・大容量アーティファクト（Git管理しない） ---
-# SIGNATE配布データは再配布不可。埋め込みキャッシュ(11MB×3)も含めて
-# チームへは別途（共有ドライブ等）で配る。data/README.md だけは追跡する。
+# --- コンペ配布データ（Git管理しない） ---
+# SIGNATE配布データは再配布不可。data/ では README と埋め込みキャッシュだけを追跡する。
 data/*
 !data/README.md
+!data/*.npz
 
 # エキスパートOOFキャッシュ。再現可能なので追跡しない（合計約1MB）
 exp/_*.npz
+
+# train の行単位ダンプ。`y`(正解ラベル) と `idx`(行番号) を含むため、
+# 公開リポジトリに載せると配布データの再配布になる。集計CSVだけ追跡する。
+exp/_h25_boundary.csv
+exp/_lockbox_discovery_errors.csv
 
 # --- 生成物 ---
 __pycache__/
