@@ -413,7 +413,7 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
         test_pos=None, threshold=None, target="zero", survey_step=False,
         org_embed=False, concat_embed=False, cross=False, e7_model="lgbm",
         linear=False, linear_c=LINEAR_C, h30_absdiff=False,
-        gam=False, gam_c=GAM_C, embed_knn=False):
+        gam=False, gam_c=GAM_C, embed_knn=False, output=None):
     default = expert_names(cross, linear, h30_absdiff, gam, embed_knn)
     experts = default if experts is None else experts
     y, oof, te = compute_expert_preds(seed, cache=not no_cache,
@@ -501,8 +501,10 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
                  + ("_h32knn" if embed_knn else ""))
         t_tag = (f"_pos{test_pos}" if test_pos is not None
                  else f"_th{threshold}" if threshold is not None else "")
-        out = (f"submission/submission_ensemble_experts_seed{seed}"
-               f"_a{tag}{n_tag}{r_tag}{t_tag}.csv")
+        out = output or (f"submission/submission_ensemble_experts_seed{seed}"
+                         f"_a{tag}{n_tag}{r_tag}{t_tag}.csv")
+        if os.path.exists(out):
+            raise FileExistsError(f"既存の提出物は上書きしない: {out}")
         sub.assign(pred=sub["pred"].astype(int)).to_csv(
             out, index=False, header=False, lineterminator="\n")
         print(f"保存: {out} 正例={int(label.sum())} (th={th:.3f})")
@@ -514,6 +516,8 @@ if __name__ == "__main__":
     p.add_argument("--alpha", type=float, default=None,
                    help="メタのL2強度。省略時は外側trainの中だけで自動選択")
     p.add_argument("--submit", action="store_true")
+    p.add_argument("--output",
+                   help="提出CSVの保存先。既存ファイルは上書きしない")
     p.add_argument("--no-cache", action="store_true")
     p.add_argument("--drop", nargs="*", default=[],
                    choices=list(EXPERTS) + [E7_NAME, E0B_NAME, E8_NAME, GAM_NAME,
@@ -561,4 +565,4 @@ if __name__ == "__main__":
         concat_embed=a.concat_embed, cross=a.cross, e7_model=a.e7_model,
         linear=a.linear, linear_c=a.linear_c,
         h30_absdiff=a.h30_absdiff, gam=a.gam, gam_c=a.gam_c,
-        embed_knn=a.embed_knn)
+        embed_knn=a.embed_knn, output=a.output)
