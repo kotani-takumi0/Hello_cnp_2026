@@ -1,0 +1,665 @@
+{
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    42
+  ],
+  "rows": [
+    {
+      "seed": 0,
+      "variant": "drop_dx_manual",
+      "removed_columns": 22,
+      "delta": {
+        "auc": 0.005249213610248438,
+        "ap": 0.011190903607782965,
+        "f1": -0.003701539060977921
+      }
+    },
+    {
+      "seed": 0,
+      "variant": "drop_org_manual",
+      "removed_columns": 14,
+      "delta": {
+        "auc": -0.0024608789704000378,
+        "ap": -0.008253468709593648,
+        "f1": -0.01525725852744797
+      }
+    },
+    {
+      "seed": 0,
+      "variant": "drop_overview_manual",
+      "removed_columns": 9,
+      "delta": {
+        "auc": -0.00027784117407736453,
+        "ap": -0.003377712713845571,
+        "f1": -0.014529878040102973
+      }
+    },
+    {
+      "seed": 0,
+      "variant": "drop_finance",
+      "removed_columns": 22,
+      "delta": {
+        "auc": -0.008811534377883845,
+        "ap": -0.01398906011165435,
+        "f1": -0.030489797824158393
+      }
+    },
+    {
+      "seed": 0,
+      "variant": "drop_scale",
+      "removed_columns": 4,
+      "delta": {
+        "auc": 0.0031455590065193606,
+        "ap": 0.005468345705060829,
+        "f1": 0.005844056691514332
+      }
+    },
+    {
+      "seed": 0,
+      "variant": "drop_survey",
+      "removed_columns": 11,
+      "delta": {
+        "auc": -0.0026990285481806042,
+        "ap": -0.006144948690908647,
+        "f1": -0.009909664944560248
+      }
+    },
+    {
+      "seed": 0,
+      "variant": "drop_categories",
+      "removed_columns": 3,
+      "delta": {
+        "auc": -0.0001984579814838794,
+        "ap": 0.001830461671377348,
+        "f1": -0.008407847324169215
+      }
+    },
+    {
+      "seed": 0,
+      "variant": "drop_missing_flags",
+      "removed_columns": 7,
+      "delta": {
+        "auc": 0.0009724441092709979,
+        "ap": 0.0013789495305215338,
+        "f1": -0.0005695900491078376
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "drop_dx_manual",
+      "removed_columns": 22,
+      "delta": {
+        "auc": 0.002748643043551602,
+        "ap": 0.0009408085854464288,
+        "f1": 0.01436970989209796
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "drop_org_manual",
+      "removed_columns": 14,
+      "delta": {
+        "auc": -8.930609166768466e-05,
+        "ap": -0.004120803135360784,
+        "f1": 0.0010098024727845933
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "drop_overview_manual",
+      "removed_columns": 9,
+      "delta": {
+        "auc": -0.00777955287416765,
+        "ap": -0.022968595327359176,
+        "f1": -0.011136179567279969
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "drop_finance",
+      "removed_columns": 22,
+      "delta": {
+        "auc": -0.0046538396657967995,
+        "ap": -0.009974096477515904,
+        "f1": -0.01050458016325062
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "drop_scale",
+      "removed_columns": 4,
+      "delta": {
+        "auc": -9.92289907419952e-05,
+        "ap": -0.005165438710615922,
+        "f1": -0.0039406925767203616
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "drop_survey",
+      "removed_columns": 11,
+      "delta": {
+        "auc": -0.0037012413546743117,
+        "ap": -0.01629993690039422,
+        "f1": -0.01170617500731641
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "drop_categories",
+      "removed_columns": 3,
+      "delta": {
+        "auc": -0.0013296684759419586,
+        "ap": -0.0005227586157255937,
+        "f1": -0.010919613964561203
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "drop_missing_flags",
+      "removed_columns": 7,
+      "delta": {
+        "auc": 0.000515990751858042,
+        "ap": 6.664910316278583e-05,
+        "f1": -0.00486510934272133
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "drop_dx_manual",
+      "removed_columns": 22,
+      "delta": {
+        "auc": -0.0031852506028160477,
+        "ap": -0.010187779639830308,
+        "f1": 0.010823181985972652
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "drop_org_manual",
+      "removed_columns": 14,
+      "delta": {
+        "auc": -0.0016174325490936337,
+        "ap": -0.012495059499945671,
+        "f1": -0.011119691119691133
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "drop_overview_manual",
+      "removed_columns": 9,
+      "delta": {
+        "auc": -0.0006549113388968353,
+        "ap": -0.005648782574666389,
+        "f1": -0.011348088531187073
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "drop_finance",
+      "removed_columns": 22,
+      "delta": {
+        "auc": -0.002947101025035481,
+        "ap": -0.011380361846920595,
+        "f1": -0.0046243674581549765
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "drop_scale",
+      "removed_columns": 4,
+      "delta": {
+        "auc": -0.00010915188981619472,
+        "ap": -0.005369447709703601,
+        "f1": -0.007961476725521721
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "drop_survey",
+      "removed_columns": 11,
+      "delta": {
+        "auc": -0.0037409329509709988,
+        "ap": -0.014474169673472925,
+        "f1": -0.012875411033978823
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "drop_categories",
+      "removed_columns": 3,
+      "delta": {
+        "auc": -0.005140061720432243,
+        "ap": -0.012607045826345531,
+        "f1": -0.013063367079115151
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "drop_missing_flags",
+      "removed_columns": 7,
+      "delta": {
+        "auc": 0.00017861218333559137,
+        "ap": 0.0004072533513894694,
+        "f1": -0.004593837535013967
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "drop_dx_manual",
+      "removed_columns": 22,
+      "delta": {
+        "auc": 0.005348442600990211,
+        "ap": 0.016005222637414773,
+        "f1": 0.008233276157804448
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "drop_org_manual",
+      "removed_columns": 14,
+      "delta": {
+        "auc": -0.0023418041815095325,
+        "ap": -0.006775025380494015,
+        "f1": -0.0012506012506012798
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "drop_overview_manual",
+      "removed_columns": 9,
+      "delta": {
+        "auc": -0.00038699306389355925,
+        "ap": 0.006842608044729026,
+        "f1": 1.4970620157872538e-05
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "drop_finance",
+      "removed_columns": 22,
+      "delta": {
+        "auc": -0.0072337934250870095,
+        "ap": -0.009278523337457045,
+        "f1": -0.019527287117314884
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "drop_scale",
+      "removed_columns": 4,
+      "delta": {
+        "auc": -0.00032745566944836213,
+        "ap": 0.0055712114032263615,
+        "f1": -0.006320572378013645
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "drop_survey",
+      "removed_columns": 11,
+      "delta": {
+        "auc": -0.002679182750032316,
+        "ap": -0.0011527626170059202,
+        "f1": -0.00569079162043995
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "drop_categories",
+      "removed_columns": 3,
+      "delta": {
+        "auc": -0.003095944511148474,
+        "ap": -0.0012449793380687746,
+        "f1": -0.010123210123210158
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "drop_missing_flags",
+      "removed_columns": 7,
+      "delta": {
+        "auc": -0.002867717832441885,
+        "ap": 0.004076845709477861,
+        "f1": 0.000840538771573196
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "drop_dx_manual",
+      "removed_columns": 22,
+      "delta": {
+        "auc": -0.0005854510453773276,
+        "ap": 0.0018022073232836222,
+        "f1": -0.0029309596178896946
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "drop_org_manual",
+      "removed_columns": 14,
+      "delta": {
+        "auc": -0.0035821665657838064,
+        "ap": -0.010748231692520704,
+        "f1": -0.010102548482079365
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "drop_overview_manual",
+      "removed_columns": 9,
+      "delta": {
+        "auc": 0.0003869930638936703,
+        "ap": 0.0029787799990089736,
+        "f1": -0.0007170435741864489
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "drop_finance",
+      "removed_columns": 22,
+      "delta": {
+        "auc": -0.010151125752899892,
+        "ap": -0.023623582094865037,
+        "f1": -0.039283070741249926
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "drop_scale",
+      "removed_columns": 4,
+      "delta": {
+        "auc": -0.00037707016481935973,
+        "ap": -0.004413432673332496,
+        "f1": 0.0
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "drop_survey",
+      "removed_columns": 11,
+      "delta": {
+        "auc": -0.0016372783472419217,
+        "ap": -0.005967833108267873,
+        "f1": 0.002922777151061373
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "drop_categories",
+      "removed_columns": 3,
+      "delta": {
+        "auc": -0.0018853508240967987,
+        "ap": -0.00777321914022322,
+        "f1": 0.007893723527146679
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "drop_missing_flags",
+      "removed_columns": 7,
+      "delta": {
+        "auc": 0.0014983577602032394,
+        "ap": 0.006991567348511474,
+        "f1": -0.0011841773746535944
+      }
+    }
+  ],
+  "summary": {
+    "drop_dx_manual": {
+      "removed_columns": [
+        "DX展望_cautious_count",
+        "DX展望_expand_count",
+        "DX展望_education_count",
+        "DX展望_vendor_count",
+        "DX展望_future_cautious_count",
+        "DX展望_future_expand_count",
+        "DX展望_future_education_count",
+        "DX展望_edu_cautious_count",
+        "DX展望_edu_expand_count",
+        "DX展望_has_cautious",
+        "DX展望_has_future_cautious",
+        "DX展望_has_education",
+        "DX展望_has_future_education",
+        "DX展望_has_vendor",
+        "DX展望_expand_minus_cautious",
+        "DX展望_future_expand_minus_cautious",
+        "DX展望_future_text_ratio",
+        "DX展望_education_text_ratio",
+        "DX展望_katakana_ratio",
+        "DX展望_education_x_expand",
+        "DX展望_education_x_cautious",
+        "DX展望_vendor_x_education"
+      ],
+      "n_removed": 22,
+      "auc": {
+        "mean": 0.001915119521319375,
+        "wins": 3,
+        "n": 5
+      },
+      "ap": {
+        "mean": 0.0039502725028194964,
+        "wins": 4,
+        "n": 5
+      },
+      "f1": {
+        "mean": 0.005358733871401488,
+        "wins": 3,
+        "n": 5
+      }
+    },
+    "drop_org_manual": {
+      "removed_columns": [
+        "組織図_has_dx",
+        "組織図_has_dx推進",
+        "組織図_has_digital",
+        "組織図_has_カード",
+        "組織図_has_金融代理",
+        "組織図_has_施工工事",
+        "組織図_has_店舗",
+        "組織図_has_不動産",
+        "組織図_has_技術開発",
+        "組織図_has_経営企画",
+        "組織図_has_研究開発",
+        "組織図_dx_x_技術開発",
+        "組織図_dx_x_経営企画",
+        "組織図_dx_x_研究開発"
+      ],
+      "n_removed": 14,
+      "auc": {
+        "mean": -0.002018317671690939,
+        "wins": 0,
+        "n": 5
+      },
+      "ap": {
+        "mean": -0.008478517683582964,
+        "wins": 0,
+        "n": 5
+      },
+      "f1": {
+        "mean": -0.007344059381407031,
+        "wins": 1,
+        "n": 5
+      }
+    },
+    "drop_overview_manual": {
+      "removed_columns": [
+        "概要_high_dx",
+        "概要_high_iot",
+        "概要_high_it_ict",
+        "概要_low_construction",
+        "概要_low_education_training",
+        "概要_low_medical",
+        "概要_high3_count",
+        "概要_low3_count",
+        "概要_high3_minus_low3"
+      ],
+      "n_removed": 9,
+      "auc": {
+        "mean": -0.0017424610774283479,
+        "wins": 1,
+        "n": 5
+      },
+      "ap": {
+        "mean": -0.0044347405144266275,
+        "wins": 2,
+        "n": 5
+      },
+      "f1": {
+        "mean": -0.007543243818519718,
+        "wins": 1,
+        "n": 5
+      }
+    },
+    "drop_finance": {
+      "removed_columns": [
+        "資本金",
+        "総資産",
+        "流動資産",
+        "固定資産",
+        "負債",
+        "短期借入金",
+        "長期借入金",
+        "純資産",
+        "自己資本",
+        "売上",
+        "営業利益",
+        "経常利益",
+        "当期純利益",
+        "営業CF",
+        "減価償却費",
+        "運転資本変動",
+        "投資CF",
+        "有形固定資産変動",
+        "無形固定資産変動(ソフトウェア関連)",
+        "営業利益率",
+        "経常利益率",
+        "純利益率"
+      ],
+      "n_removed": 22,
+      "auc": {
+        "mean": -0.006759478849340606,
+        "wins": 0,
+        "n": 5
+      },
+      "ap": {
+        "mean": -0.013649124773682585,
+        "wins": 0,
+        "n": 5
+      },
+      "f1": {
+        "mean": -0.02088582066082576,
+        "wins": 0,
+        "n": 5
+      }
+    },
+    "drop_scale": {
+      "removed_columns": [
+        "従業員数",
+        "事業所数",
+        "工場数",
+        "店舗数"
+      ],
+      "n_removed": 4,
+      "auc": {
+        "mean": 0.00044653045833868975,
+        "wins": 1,
+        "n": 5
+      },
+      "ap": {
+        "mean": -0.0007817523970729656,
+        "wins": 2,
+        "n": 5
+      },
+      "f1": {
+        "mean": -0.002475736997748279,
+        "wins": 1,
+        "n": 5
+      }
+    },
+    "drop_survey": {
+      "removed_columns": [
+        "アンケート１",
+        "アンケート２",
+        "アンケート３",
+        "アンケート４",
+        "アンケート５",
+        "アンケート６",
+        "アンケート７",
+        "アンケート８",
+        "アンケート９",
+        "アンケート１０",
+        "アンケート１１"
+      ],
+      "n_removed": 11,
+      "auc": {
+        "mean": -0.0028915327902200305,
+        "wins": 0,
+        "n": 5
+      },
+      "ap": {
+        "mean": -0.008807930198009916,
+        "wins": 0,
+        "n": 5
+      },
+      "f1": {
+        "mean": -0.007451853091046812,
+        "wins": 1,
+        "n": 5
+      }
+    },
+    "drop_categories": {
+      "removed_columns": [
+        "業界",
+        "上場種別",
+        "特徴"
+      ],
+      "n_removed": 3,
+      "auc": {
+        "mean": -0.0023298967026206705,
+        "wins": 0,
+        "n": 5
+      },
+      "ap": {
+        "mean": -0.004063508249797154,
+        "wins": 1,
+        "n": 5
+      },
+      "f1": {
+        "mean": -0.00692406299278181,
+        "wins": 1,
+        "n": 5
+      }
+    },
+    "drop_missing_flags": {
+      "removed_columns": [
+        "事業所数_isna",
+        "工場数_isna",
+        "店舗数_isna",
+        "資本金_isna",
+        "営業利益_isna",
+        "経常利益_isna",
+        "アンケート７_isna"
+      ],
+      "n_removed": 7,
+      "auc": {
+        "mean": 5.953739444519712e-05,
+        "wins": 4,
+        "n": 5
+      },
+      "ap": {
+        "mean": 0.002584253008612625,
+        "wins": 5,
+        "n": 5
+      },
+      "f1": {
+        "mean": -0.0020744351059847066,
+        "wins": 1,
+        "n": 5
+      }
+    }
+  }
+}

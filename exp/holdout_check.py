@@ -42,8 +42,8 @@ from organization_features import (  # noqa: E402
 )
 from text_features import TEXT_COL, build_model, nested_text_pred  # noqa: E402
 from expert_groups import (  # noqa: E402
-    e0_anchor_cols, e1_finance_cols, e2_survey_cols, e6_manual_cols,
-    e7_cross_cols,
+    FINANCE_ISNA_COLS, SURVEY_ISNA_COLS, e0_anchor_cols, e1_finance_cols,
+    e2_survey_cols, e6_manual_cols, e7_cross_cols,
 )
 from ensemble_experts import (  # noqa: E402
     DX_SCORE_COL, E0B_NAME, E7_NAME, E8_NAME, E9_NAME, EXPERTS, GAM_NAME, LINEAR_C,
@@ -257,10 +257,11 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
         target="zero", survey_step=False, org_embed=False, concat_embed=False,
         cross=False, e7_model="lgbm", linear=False, linear_c=LINEAR_C,
         h30_absdiff=False, gam=False, gam_c=GAM_C, embed_knn=False,
-        out_csv=None):
+        out_csv=None, llm_e0_core4_pruned=False):
     train, test = pd.read_csv("data/train.csv"), pd.read_csv("data/test.csv")
     X, y, _ = build_features(train, test, finance_ratios=finance_ratios,
-                             survey_step=survey_step, cross=cross)
+                             survey_step=survey_step, cross=cross,
+                             llm_makebuy=llm_e0_core4_pruned)
     txt = train[TEXT_COL].fillna("").astype(str).values
     org = load_org_text(train)
     # E4 の入力/モデル。org_embed=False なら現行と完全一致（e4=None 相当）。
@@ -275,7 +276,15 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
     if embed_knn:
         knn_train, _ = load_knn_embeddings()
         knn = (knn_train, build_knn_model)
-    cols = (e0_anchor_cols(X.columns),
+    c0 = e0_anchor_cols(X.columns)
+    if llm_e0_core4_pruned:
+        missing = set(FINANCE_ISNA_COLS + SURVEY_ISNA_COLS)
+        core4 = {"LLM_need_score", "LLM_make_limitation_score",
+                 "LLM_buy_openness_score",
+                 "LLM_internal_training_capability_score"}
+        c0 = [c for c in c0 if not c.startswith("DX展望_") and c not in missing
+              and (not c.startswith("LLM_") or c in core4)]
+    cols = (c0,
             e1_finance_cols(with_ratios=finance_ratios),
             e2_survey_cols(with_step=survey_step), e6_manual_cols(X.columns),
             e7_cross_cols() if cross else None)
@@ -287,6 +296,7 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
           f"{', E4を組織図embeddingに差し替え' if org_embed and not concat_embed else ''}"
           f"{f', E7(H27 不満×財務, {e7_model})を追加' if cross else ''}"
           f"{f', E0b(H28 94列one-hot+LR, C={linear_c:g})を追加' if linear else ''}"
+          f"{', E0/E0bをLLM親4軸のpruned構成へ変更' if llm_e0_core4_pruned else ''}"
           f"{', E8(H30 3文書間絶対差embedding)を追加' if h30_absdiff else ''}"
           f"{f', E0c(H31 94列GAM, C={gam_c:g})を追加' if gam else ''}"
           f"{f', E9(H32 embedding cosine-kNN, dim={KNN_DIM}, k={KNN_NEIGHBORS}, scale={KNN_DISTANCE_SCALE:g}, prior={KNN_PRIOR_STRENGTH:g})を追加' if embed_knn else ''}")
@@ -441,6 +451,8 @@ if __name__ == "__main__":
                    help="H31 GAMのLR正則化C（事前固定値0.01）")
     p.add_argument("--embed-knn", action="store_true",
                    help="H32のDX展望+組織図embedding cosine-kNNを追加")
+    p.add_argument("--llm-e0-core4-pruned", action="store_true",
+                   help="E0/E0bのDX辞書・欠損flagsを削りLLM親4軸へ置換")
     p.add_argument("--out-csv", default=None,
                    help="repごとの全スコアをCSV保存")
     p.add_argument("--threshold-rules", nargs="+", default=["oof_best"],
@@ -452,4 +464,5 @@ if __name__ == "__main__":
     run(a.n_reps, a.alpha, a.test_size, a.finance_ratios,
         tuple(a.threshold_rules), a.meta_target, a.survey_step, a.org_embed,
         a.concat_embed, a.cross, a.e7_model, a.linear, a.linear_c,
-        a.h30_absdiff, a.gam, a.gam_c, a.embed_knn, a.out_csv)
+        a.h30_absdiff, a.gam, a.gam_c, a.embed_knn, a.out_csv,
+        a.llm_e0_core4_pruned)

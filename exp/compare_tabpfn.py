@@ -46,11 +46,14 @@ OUT_JSON = Path("exp/_r2_tabpfn_discovery_seed20260815.json")
 
 
 def _candidate_model(seed: int, cat_indices: list[int], n_estimators: int):
-    from tabpfn import TabPFNClassifier
+    from tabpfn.classifier import TabPFNClassifier
+    from tabpfn.constants import ModelVersion
 
-    return TabPFNClassifier(
+    # model_path="auto"（デフォルト）はv3を解決し、v3/v2.5/v2.6は非商用ライセンスの
+    # HFゲートに当たり TABPFN_TOKEN 認証を要求する。v2 はApache-2.0でゲートなし。
+    return TabPFNClassifier.create_default_for_version(
+        ModelVersion.V2,
         n_estimators=n_estimators,
-        auto_scale_n_estimators=False,
         categorical_features_indices=cat_indices,
         device="cpu",
         fit_mode="fit_preprocessors",

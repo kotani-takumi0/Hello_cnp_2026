@@ -43,10 +43,12 @@ from organization_features import (  # noqa: E402
     ORG_SCORE_COL, add_org_manual_features, build_org_model,
     fold_org_preds, load_org_text,
 )
-from dx_outlook_features import add_dx_outlook_manual_features  # noqa: E402
+from dx_outlook_features import (  # noqa: E402
+    add_dx_outlook_manual_features, add_dx_outlook_priority_features,
+)
 from company_overview_features import add_company_overview_six_rate_flags  # noqa: E402
 from cross_features import add_cross_features  # noqa: E402
-from finance_ratio_features import add_finance_ratios  # noqa: E402
+from finance_ratio_features import FINANCE_RATIO_COLS, add_finance_ratios  # noqa: E402
 from survey_features import add_survey_features  # noqa: E402
 from text_features import TEXT_COL, build_model, nested_text_pred  # noqa: E402
 from embedding_features import (  # noqa: E402
@@ -55,8 +57,8 @@ from embedding_features import (  # noqa: E402
     load_absdiff_embeddings, load_concat_embeddings, load_embeddings,
 )
 from expert_groups import (  # noqa: E402
-    e0_anchor_cols, e1_finance_cols, e2_survey_cols, e6_manual_cols,
-    e7_cross_cols,
+    FINANCE_ISNA_COLS, SURVEY_ISNA_COLS, e0_anchor_cols, e1_finance_cols,
+    e2_survey_cols, e6_manual_cols, e7_cross_cols,
 )
 from meta_blend import (  # noqa: E402
     apply_meta, fit_meta, select_alpha, to_logit, uniform_blend,
@@ -66,6 +68,13 @@ from embedding_knn import (  # noqa: E402
     KNN_DIM, KNN_DISTANCE_SCALE, KNN_NEIGHBORS, KNN_PRIOR_STRENGTH,
     KNN_SLUGS, build_knn_model, load_knn_embeddings,
 )
+from llm_make_or_buy_features import (  # noqa: E402
+    LLM_FEATURE_COLS, add_llm_make_or_buy_features,
+)
+from hypotheses import h2_financial_health  # noqa: E402
+from readiness_to_scale_features import READINESS_COLS, add_readiness_features  # noqa: E402
+
+H2_RESTORE_COLS = ("自己資本比率", "ROA")
 
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 THS = np.arange(0.05, 0.95, 0.005)
@@ -106,7 +115,8 @@ def expert_names(cross=False, linear=False, h30_absdiff=False, gam=False,
 
 
 def build_features(train, test, finance_ratios=False, survey_step=False,
-                   cross=False):
+                   cross=False, h37_priority=False, llm_makebuy=False,
+                   h2_restore=False, h21_restore=False, h49_restore=False):
     """train/test に行単位の決定的特徴を積む。fold内スコアはここでは足さない。
 
     finance_ratios=True のとき H21 の財務比4本も積む。この列は E1 だけが使い、
@@ -124,15 +134,24 @@ def build_features(train, test, finance_ratios=False, survey_step=False,
 
     adders = [add_org_manual_features, add_dx_outlook_manual_features,
               add_company_overview_six_rate_flags]
-    if finance_ratios:
+    if h37_priority:
+        adders.append(add_dx_outlook_priority_features)
+    if finance_ratios or h21_restore:
         adders.append(add_finance_ratios)
     if survey_step:
         adders.append(lambda raw, df: add_survey_features(raw, df,
                                                           groups=("step",)))
     if cross:
         adders.append(add_cross_features)
+    if h49_restore:
+        adders.append(add_readiness_features)
+    if h2_restore:
+        adders.append(h2_financial_health)
     for add in adders:
         X, Xte = add(train, X), add(test, Xte)
+    if llm_makebuy:
+        X = add_llm_make_or_buy_features(train, X, "train")
+        Xte = add_llm_make_or_buy_features(test, Xte, "test")
     return X, y, Xte[X.columns]
 
 
@@ -242,7 +261,15 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
                          concat_embed=False, cross=False, e7_model="lgbm",
                          linear=False, linear_c=LINEAR_C,
                          h30_absdiff=False, gam=False, gam_c=GAM_C,
-                         embed_knn=False):
+                         embed_knn=False, h37_priority=False,
+                         llm_e0_replace_dx_manual=False,
+                         llm_e0_core4_pruned=False,
+                         llm_e0_core4_pruned_e0_only=False,
+                         llm_e0_core4_pruned_e0_only_h2=False,
+                         llm_e0_core4_pruned_e0_only_h2_h21=False,
+                         llm_e0_core4_pruned_e0_only_h2_both4=False,
+                         e0_restore_missing_flags=False,
+                         h21_anchor_both=False, h49_e0b_only=False):
     """各エキスパートの OOF と test 予測を返す。重いのでnpzにキャッシュする。
 
     キャッシュ名に構成タグを含める。専用列のあり/なしで中身が変わるので、
@@ -255,7 +282,17 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
            + (f"_lin{linear_c:g}" if linear else "")
            + ("_h30abs" if h30_absdiff else "")
            + (f"_gam{gam_c:g}" if gam else "")
-           + ("_h32knn" if embed_knn else ""))
+           + ("_h32knn" if embed_knn else "")
+           + ("_h37" if h37_priority else "")
+           + ("_llme0dx" if llm_e0_replace_dx_manual else "")
+           + ("_llmcore4pruned" if llm_e0_core4_pruned else "")
+           + ("_llmcore4e0only" if llm_e0_core4_pruned_e0_only else "")
+           + ("_llmcore4e0onlyh2" if llm_e0_core4_pruned_e0_only_h2 else "")
+           + ("_llmcore4e0onlyh2h21" if llm_e0_core4_pruned_e0_only_h2_h21 else "")
+           + ("_llmcore4e0onlyh2both4" if llm_e0_core4_pruned_e0_only_h2_both4 else "")
+           + ("_e0missing" if e0_restore_missing_flags else "")
+           + ("_h21both" if h21_anchor_both else "")
+           + ("_h49e0b" if h49_e0b_only else ""))
     path = os.path.join(OUT_DIR, f"_experts_seed{seed}{tag}.npz")
     if cache and os.path.exists(path):
         d = np.load(path)
@@ -265,7 +302,20 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
 
     train, test = pd.read_csv("data/train.csv"), pd.read_csv("data/test.csv")
     X, y, Xte = build_features(train, test, finance_ratios=finance_ratios,
-                               survey_step=survey_step, cross=cross)
+                               survey_step=survey_step, cross=cross,
+                               h37_priority=h37_priority,
+                               llm_makebuy=(llm_e0_replace_dx_manual or
+                                            llm_e0_core4_pruned or
+                                            llm_e0_core4_pruned_e0_only or
+                                            llm_e0_core4_pruned_e0_only_h2 or
+                                            llm_e0_core4_pruned_e0_only_h2_h21 or
+                                            llm_e0_core4_pruned_e0_only_h2_both4),
+                               h2_restore=(llm_e0_core4_pruned_e0_only_h2 or
+                                           llm_e0_core4_pruned_e0_only_h2_h21 or
+                                           llm_e0_core4_pruned_e0_only_h2_both4),
+                               h21_restore=(llm_e0_core4_pruned_e0_only_h2_h21 or
+                                            h21_anchor_both),
+                               h49_restore=h49_e0b_only)
     txt, txt_te = (train[TEXT_COL].fillna("").astype(str).values,
                    test[TEXT_COL].fillna("").astype(str).values)
     org, org_te = load_org_text(train), load_org_text(test)  # E0 が使う（常にTF-IDF）
@@ -275,7 +325,46 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
         h30_in, h30_te, h30_model = h30
     if embed_knn:
         knn_in, knn_te = load_knn_embeddings()
-    c0 = e0_anchor_cols(X.columns)
+    c0_all = e0_anchor_cols(X.columns)
+    c0 = list(c0_all)
+    if llm_e0_replace_dx_manual:
+        # H14のDX辞書だけをLLM意味軸へ置換。nested TF-IDFスコアは残す。
+        c0 = [c for c in c0 if not c.startswith("DX展望_")]
+    if (llm_e0_core4_pruned or llm_e0_core4_pruned_e0_only or
+            llm_e0_core4_pruned_e0_only_h2 or
+            llm_e0_core4_pruned_e0_only_h2_h21 or
+            llm_e0_core4_pruned_e0_only_h2_both4):
+        missing = set(FINANCE_ISNA_COLS + SURVEY_ISNA_COLS)
+        core4 = {
+            "LLM_need_score", "LLM_make_limitation_score",
+            "LLM_buy_openness_score", "LLM_internal_training_capability_score",
+        }
+        c0 = [c for c in c0
+              if not c.startswith("DX展望_") and c not in missing
+              and (not c.startswith("LLM_") or c in core4)]
+        if e0_restore_missing_flags:
+            c0 += [c for c in c0_all if c in missing]
+    if llm_e0_core4_pruned_e0_only_h2_h21:
+        c0 += ["ソフト投資比率_売上", "流動比率"]
+    if h21_anchor_both:
+        c0 += ["ソフト投資比率_売上", "流動比率"]
+    if h49_e0b_only:
+        c0 = [c for c in c0 if c not in READINESS_COLS]
+    e0_only = (llm_e0_core4_pruned_e0_only or llm_e0_core4_pruned_e0_only_h2 or
+               llm_e0_core4_pruned_e0_only_h2_h21 or
+               llm_e0_core4_pruned_e0_only_h2_both4)
+    if llm_e0_core4_pruned_e0_only_h2_both4:
+        c0b = [c for c in c0_all if not c.startswith("LLM_")]
+    else:
+        c0b = ([c for c in c0_all
+                if not c.startswith("LLM_") and c not in H2_RESTORE_COLS
+                and c not in FINANCE_RATIO_COLS]
+               if e0_only else c0)
+    if h21_anchor_both:
+        c0b += ["ソフト投資比率_売上", "流動比率"]
+    if h49_e0b_only:
+        c0b = [c for c in c0b if c not in READINESS_COLS]
+        c0b += ["展開段階_移行幅", "展開段階_scale_window"]
     c1, c2, c6 = (e1_finance_cols(with_ratios=finance_ratios),
                   e2_survey_cols(with_step=survey_step),
                   e6_manual_cols(X.columns))
@@ -319,7 +408,15 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
 
         if linear:
             # E0 と同一の94列（fold内テキストスコア込み）に one-hot + LR
-            p, q = fit_e0b(A_tr, y[tr], A_va, A_te, linear_c)
+            if c0b == c0:
+                B_tr, B_va, B_te = A_tr, A_va, A_te
+            else:
+                B_tr, B_va, B_te = (Xtr[c0b].copy(), Xva[c0b].copy(),
+                                     Xte[c0b].copy())
+                for col, v in ((DX_SCORE_COL, (t_tr, t_va, t_te)),
+                               (ORG_SCORE_COL, (o_tr, o_va, o_te))):
+                    B_tr[col], B_va[col], B_te[col] = v
+            p, q = fit_e0b(B_tr, y[tr], B_va, B_te, linear_c)
             oof[E0B_NAME][va] = p
             te[E0B_NAME].append(q)
 
@@ -413,7 +510,14 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
         test_pos=None, threshold=None, target="zero", survey_step=False,
         org_embed=False, concat_embed=False, cross=False, e7_model="lgbm",
         linear=False, linear_c=LINEAR_C, h30_absdiff=False,
-        gam=False, gam_c=GAM_C, embed_knn=False, output=None):
+        gam=False, gam_c=GAM_C, embed_knn=False, h37_priority=False,
+        llm_e0_replace_dx_manual=False, llm_e0_core4_pruned=False,
+        llm_e0_core4_pruned_e0_only=False,
+        llm_e0_core4_pruned_e0_only_h2=False,
+        llm_e0_core4_pruned_e0_only_h2_h21=False,
+        llm_e0_core4_pruned_e0_only_h2_both4=False,
+        e0_restore_missing_flags=False, h21_anchor_both=False,
+        h49_e0b_only=False, output=None):
     default = expert_names(cross, linear, h30_absdiff, gam, embed_knn)
     experts = default if experts is None else experts
     y, oof, te = compute_expert_preds(seed, cache=not no_cache,
@@ -425,7 +529,17 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
                                       linear=linear, linear_c=linear_c,
                                       h30_absdiff=h30_absdiff,
                                       gam=gam, gam_c=gam_c,
-                                      embed_knn=embed_knn)
+                                      embed_knn=embed_knn,
+                                      h37_priority=h37_priority,
+                                      llm_e0_replace_dx_manual=llm_e0_replace_dx_manual,
+                                      llm_e0_core4_pruned=llm_e0_core4_pruned,
+                                      llm_e0_core4_pruned_e0_only=llm_e0_core4_pruned_e0_only,
+                                      llm_e0_core4_pruned_e0_only_h2=llm_e0_core4_pruned_e0_only_h2,
+                                      llm_e0_core4_pruned_e0_only_h2_h21=llm_e0_core4_pruned_e0_only_h2_h21,
+                                      llm_e0_core4_pruned_e0_only_h2_both4=llm_e0_core4_pruned_e0_only_h2_both4,
+                                      e0_restore_missing_flags=e0_restore_missing_flags,
+                                      h21_anchor_both=h21_anchor_both,
+                                      h49_e0b_only=h49_e0b_only)
     if target != "zero":
         print(f"メタ重みの縮小先: {target}")
     if finance_ratios:
@@ -445,6 +559,26 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
         print(f"E9(H32 [{' ; '.join(KNN_SLUGS)}] embedding cosine-kNN, "
               f"dim={KNN_DIM}, k={KNN_NEIGHBORS}, scale={KNN_DISTANCE_SCALE:g}, "
               f"prior={KNN_PRIOR_STRENGTH:g})を追加した構成")
+    if h37_priority:
+        print("H37 governance/priority 2列を E0/E0b に追加したexp008復元構成")
+    if llm_e0_replace_dx_manual:
+        print(f"E0/E0bのDX手動辞書をLLM Make-or-Buy {len(LLM_FEATURE_COLS)}列へ置換")
+    if llm_e0_core4_pruned:
+        print("E0/E0bからDX辞書22列・欠損フラグ7列を削除しLLM親スコア4列へ置換")
+    if llm_e0_core4_pruned_e0_only:
+        print("E0だけDX辞書・欠損flagsを削りLLM親4軸へ置換（E0bは元の94列）")
+    if llm_e0_core4_pruned_e0_only_h2:
+        print("E0だけpruned+LLM親4軸へ置換し、H2（自己資本比率・ROA）を復元")
+    if llm_e0_core4_pruned_e0_only_h2_h21:
+        print("E0だけpruned+LLM親4軸へ置換し、H2＋H21の財務4列を復元")
+    if llm_e0_core4_pruned_e0_only_h2_both4:
+        print("E0へH2財務健全性4列を追加し、E0bにも同じ4列を共有")
+    if e0_restore_missing_flags:
+        print("削減E0へ財務・アンケート欠損フラグ7列を復元")
+    if h21_anchor_both:
+        print("H21（ソフト投資/売上・流動比率）をE0とE0bの両方へ追加")
+    if h49_e0b_only:
+        print("H49展開段階2列をE0bだけへ追加")
     if concat_embed:
         print(f"E4 を [{' ; '.join(CONCAT_SLUGS)}] 連結 embedding+LR に差し替えた構成 "
               f"(ブロックごと dim={CONCAT_EMB_DIM}, C={CONCAT_EMB_C})")
@@ -498,7 +632,17 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
                  + (f"_lin{linear_c:g}" if linear else "")
                  + ("_h30abs" if h30_absdiff else "")
                  + (f"_gam{gam_c:g}" if gam else "")
-                 + ("_h32knn" if embed_knn else ""))
+                 + ("_h32knn" if embed_knn else "")
+                 + ("_h37" if h37_priority else "")
+                 + ("_llme0dx" if llm_e0_replace_dx_manual else "")
+                 + ("_llmcore4pruned" if llm_e0_core4_pruned else "")
+                 + ("_llmcore4e0only" if llm_e0_core4_pruned_e0_only else "")
+                 + ("_llmcore4e0onlyh2" if llm_e0_core4_pruned_e0_only_h2 else "")
+                 + ("_llmcore4e0onlyh2h21" if llm_e0_core4_pruned_e0_only_h2_h21 else "")
+                 + ("_llmcore4e0onlyh2both4" if llm_e0_core4_pruned_e0_only_h2_both4 else "")
+                 + ("_e0missing" if e0_restore_missing_flags else "")
+                 + ("_h21both" if h21_anchor_both else "")
+                 + ("_h49e0b" if h49_e0b_only else ""))
         t_tag = (f"_pos{test_pos}" if test_pos is not None
                  else f"_th{threshold}" if threshold is not None else "")
         out = output or (f"submission/submission_ensemble_experts_seed{seed}"
@@ -548,6 +692,26 @@ if __name__ == "__main__":
                    help="H31 GAMのLR正則化C（事前固定値0.01）")
     p.add_argument("--embed-knn", action="store_true",
                    help="H32のDX展望+組織図embedding cosine-kNNを追加")
+    p.add_argument("--h37-priority", action="store_true",
+                   help="H37 governance/priority 2列をE0/E0bへ追加（exp008復元）")
+    p.add_argument("--llm-e0-replace-dx-manual", action="store_true",
+                   help="E0/E0b内のDX手動辞書をLLM Make-or-Buy特徴へ置換")
+    p.add_argument("--llm-e0-core4-pruned", action="store_true",
+                   help="E0/E0bのDX辞書・欠損flagsを削りLLM親スコア4列へ置換")
+    p.add_argument("--llm-e0-core4-pruned-e0-only", action="store_true",
+                   help="E0だけpruned+LLM親4軸へ置換し、E0bは元の94列を維持")
+    p.add_argument("--llm-e0-core4-pruned-e0-only-h2", action="store_true",
+                   help="E0-only pruned構成へH2（自己資本比率・ROA）だけ復元")
+    p.add_argument("--llm-e0-core4-pruned-e0-only-h2-h21", action="store_true",
+                   help="E0-only pruned構成へH2＋H21の財務4列を復元")
+    p.add_argument("--llm-e0-core4-pruned-e0-only-h2-both4", action="store_true",
+                   help="E0へH2財務健全性4列を追加し、E0bにも4列すべて共有")
+    p.add_argument("--e0-restore-missing-flags", action="store_true",
+                   help="削減E0へ財務・アンケート欠損フラグ7列を復元")
+    p.add_argument("--h21-anchor-both", action="store_true",
+                   help="H21代表2列をE0とE0bの両方へ追加")
+    p.add_argument("--h49-e0b-only", action="store_true",
+                   help="H49展開段階2列をE0bだけへ追加")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--test-pos", type=int,
                    help="testの予測正例数を指定して閾値を逆算（既定はOOF最適）")
@@ -565,4 +729,14 @@ if __name__ == "__main__":
         concat_embed=a.concat_embed, cross=a.cross, e7_model=a.e7_model,
         linear=a.linear, linear_c=a.linear_c,
         h30_absdiff=a.h30_absdiff, gam=a.gam, gam_c=a.gam_c,
-        embed_knn=a.embed_knn, output=a.output)
+        embed_knn=a.embed_knn, h37_priority=a.h37_priority,
+        llm_e0_replace_dx_manual=a.llm_e0_replace_dx_manual,
+        llm_e0_core4_pruned=a.llm_e0_core4_pruned,
+        llm_e0_core4_pruned_e0_only=a.llm_e0_core4_pruned_e0_only,
+        llm_e0_core4_pruned_e0_only_h2=a.llm_e0_core4_pruned_e0_only_h2,
+        llm_e0_core4_pruned_e0_only_h2_h21=a.llm_e0_core4_pruned_e0_only_h2_h21,
+        llm_e0_core4_pruned_e0_only_h2_both4=a.llm_e0_core4_pruned_e0_only_h2_both4,
+        e0_restore_missing_flags=a.e0_restore_missing_flags,
+        h21_anchor_both=a.h21_anchor_both,
+        h49_e0b_only=a.h49_e0b_only,
+        output=a.output)

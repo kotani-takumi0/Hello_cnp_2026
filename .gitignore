@@ -11,6 +11,7 @@ exp/_*.npz
 # 公開リポジトリに載せると配布データの再配布になる。集計CSVだけ追跡する。
 exp/_h25_boundary.csv
 exp/_lockbox_discovery_errors.csv
+exp/current_best_error_groups.csv
 
 # --- 生成物 ---
 __pycache__/

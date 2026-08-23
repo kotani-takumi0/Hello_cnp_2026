@@ -48,6 +48,21 @@ VENDOR_PATTERNS = (
     "外注", "委託", "サービス",
 )
 
+# H37: DXを全社の経営課題として統制する表現と、経営資源をDXへ
+# 優先配分する表現。exp008で E0/E0b に追加した2軸を復元する。
+GOVERNANCE_PATTERNS = (
+    "ガバナンス", "統制", "経営会議", "取締役会", "経営層", "経営陣",
+    "トップダウン", "全社方針", "全社戦略", "DX戦略", "推進委員会",
+    "責任者", "CDO", "最高デジタル責任者", "進捗管理", "KPI",
+)
+PRIORITY_PATTERNS = (
+    "最優先", "優先事項", "優先課題", "重点課題", "重点施策", "重点領域",
+    "戦略的投資", "資源集中", "経営資源", "予算枠", "予算・人員",
+    "選択と集中", "優先順位", "重点的", "優先的",
+)
+
+H37_COLS = ("H37_governance_count", "H37_priority_count")
+
 
 def _normalize(text):
     text = unicodedata.normalize("NFKC", str(text))
@@ -148,4 +163,21 @@ def add_dx_outlook_manual_features(df, X):
     X["DX展望_vendor_x_education"] = (
         (vendor_count > 0) & (education_count > 0)
     ).astype(np.int8)
+    return X
+
+
+def add_dx_outlook_priority_features(df, X):
+    """H37のgovernance/priority 2列を追加する。
+
+    列名を ``DX展望_`` で始めないことでE6には入れず、exp008と同じく
+    E0/E0bのアンカー経路だけで利用する。
+    """
+    X = X.copy()
+    texts = df[TEXT_COL].fillna("").astype(str).map(_normalize)
+    X[H37_COLS[0]] = texts.map(
+        lambda s: _count_patterns(s, GOVERNANCE_PATTERNS)
+    ).astype(np.int16)
+    X[H37_COLS[1]] = texts.map(
+        lambda s: _count_patterns(s, PRIORITY_PATTERNS)
+    ).astype(np.int16)
     return X

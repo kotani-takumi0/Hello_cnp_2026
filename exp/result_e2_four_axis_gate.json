@@ -1,0 +1,36 @@
+{
+  "method": "four-axis probability gate",
+  "axes": [
+    "アンケート１０",
+    "internal_training_capability_score",
+    "buy_openness_score",
+    "implementation_stage_ordinal"
+  ],
+  "l2": 0.1,
+  "baseline": {
+    "auc": 0.9642378717366065,
+    "ap": 0.8987266716955122,
+    "f1": 0.8337874659400545,
+    "th": 0.37499999999999983
+  },
+  "mean": {
+    "d_auc": 0.0,
+    "d_ap": 0.0,
+    "d_f1": 0.0,
+    "gate_mean": 0.9999998534177618,
+    "gate_std": 6.55475904018091e-08
+  },
+  "wins": {
+    "d_auc": 0,
+    "d_ap": 0,
+    "d_f1": 0
+  },
+  "mean_coefficients_standardized": {
+    "intercept": 15.893117288695864,
+    "アンケート１０": -1.0898276895132807e-06,
+    "internal_training_capability_score": -1.4377832760802754e-05,
+    "buy_openness_score": 7.272901069008268e-06,
+    "implementation_stage_ordinal": 6.803647814402997e-06
+  },
+  "verdict": "REJECT"
+}

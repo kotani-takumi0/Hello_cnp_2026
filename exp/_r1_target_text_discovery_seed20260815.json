@@ -12,7 +12,7 @@
     "pairs_per_anchor": 1,
     "head_c": 1.0,
     "threads": 4,
-    "local_files_only": true,
+    "local_files_only": false,
     "max_steps": 8
   },
   "seed": 20260815,
@@ -49,9 +49,9 @@
     "f1": -0.00313438683557532
   },
   "spearman": {
-    "E3_dx_text": 0.7635109282231781,
-    "E4_org_text": 0.00482128517488431,
-    "exp032": 0.5258645036743541
+    "E3_dx_text": 0.7635170364739191,
+    "E4_org_text": 0.0047907439211787054,
+    "exp032": 0.525867397056284
   },
   "errors": {
     "base_errors": 55,
@@ -62,7 +62,7 @@
     "new_fp": 1,
     "label_disagreement": 3
   },
-  "target_weight": 0.06103016273179466,
+  "target_weight": 0.06103002912735098,
   "alphas": [
     0.001,
     0.3,
@@ -72,54 +72,54 @@
   ],
   "fold_diagnostics": [
     {
-      "loss": 0.4647888261824846,
+      "loss": 0.4647889658808708,
       "steps": 8,
       "trainable_parameters": 14175744,
       "device": "cpu",
       "n_train": 385,
       "n_valid": 97,
       "fold": 1,
-      "seconds": 142.5402660369873
+      "seconds": 16.942545890808105
     },
     {
-      "loss": 0.4738584663718939,
+      "loss": 0.47385880909860134,
       "steps": 8,
       "trainable_parameters": 14175744,
       "device": "cpu",
       "n_train": 385,
       "n_valid": 97,
       "fold": 2,
-      "seconds": 135.40339064598083
+      "seconds": 19.41929030418396
     },
     {
-      "loss": 0.3993253968656063,
+      "loss": 0.39932544715702534,
       "steps": 8,
       "trainable_parameters": 14175744,
       "device": "cpu",
       "n_train": 386,
       "n_valid": 96,
       "fold": 3,
-      "seconds": 133.0607464313507
+      "seconds": 16.247446060180664
     },
     {
-      "loss": 0.4440407454967499,
+      "loss": 0.444041108712554,
       "steps": 8,
       "trainable_parameters": 14175744,
       "device": "cpu",
       "n_train": 386,
       "n_valid": 96,
       "fold": 4,
-      "seconds": 133.77223300933838
+      "seconds": 16.346940994262695
     },
     {
-      "loss": 0.3945381101220846,
+      "loss": 0.3945382311940193,
       "steps": 8,
       "trainable_parameters": 14175744,
       "device": "cpu",
       "n_train": 386,
       "n_valid": 96,
       "fold": 5,
-      "seconds": 133.53245854377747
+      "seconds": 16.377065896987915
     }
   ],
   "lockbox_opened": false

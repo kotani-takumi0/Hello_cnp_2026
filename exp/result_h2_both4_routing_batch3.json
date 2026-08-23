@@ -1,0 +1,524 @@
+{
+  "rows": [
+    {
+      "seed": 0,
+      "variant": "anchor_both4",
+      "score": {
+        "auc": 0.9581253659069033,
+        "ap": 0.8795011761048955,
+        "f1": 0.8150134048257373
+      }
+    },
+    {
+      "seed": 0,
+      "variant": "route_survey_tree_only",
+      "score": {
+        "auc": 0.9587802772458002,
+        "ap": 0.8840220862390709,
+        "f1": 0.8054054054054054
+      }
+    },
+    {
+      "seed": 0,
+      "variant": "route_survey_linear_only",
+      "score": {
+        "auc": 0.9547317344235291,
+        "ap": 0.8690683857827053,
+        "f1": 0.801980198019802
+      }
+    },
+    {
+      "seed": 0,
+      "variant": "route_survey_anchor_none",
+      "score": {
+        "auc": 0.9551584190837196,
+        "ap": 0.8757914801448257,
+        "f1": 0.7941176470588235
+      }
+    },
+    {
+      "seed": 0,
+      "variant": "route_finance_tree_only",
+      "score": {
+        "auc": 0.9516457128114548,
+        "ap": 0.8690311000165386,
+        "f1": 0.7904509283819628
+      }
+    },
+    {
+      "seed": 0,
+      "variant": "route_finance_linear_only",
+      "score": {
+        "auc": 0.9555354892485388,
+        "ap": 0.8679775543837044,
+        "f1": 0.7989556135770235
+      }
+    },
+    {
+      "seed": 0,
+      "variant": "route_finance_anchor_none",
+      "score": {
+        "auc": 0.9537791361124066,
+        "ap": 0.8743373821617152,
+        "f1": 0.7947368421052632
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "anchor_both4",
+      "score": {
+        "auc": 0.957847524732826,
+        "ap": 0.8774897421901076,
+        "f1": 0.8138297872340425
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "route_survey_tree_only",
+      "score": {
+        "auc": 0.9559125594133582,
+        "ap": 0.8726077045669134,
+        "f1": 0.8045325779036827
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "route_survey_linear_only",
+      "score": {
+        "auc": 0.9580459827143097,
+        "ap": 0.8722870082871849,
+        "f1": 0.8179419525065963
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "route_survey_anchor_none",
+      "score": {
+        "auc": 0.9561308631929905,
+        "ap": 0.8702923020694493,
+        "f1": 0.8186528497409327
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "route_finance_tree_only",
+      "score": {
+        "auc": 0.9547912718179743,
+        "ap": 0.8661169071622911,
+        "f1": 0.8076923076923077
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "route_finance_linear_only",
+      "score": {
+        "auc": 0.9462377328160195,
+        "ap": 0.8425794205839636,
+        "f1": 0.819672131147541
+      }
+    },
+    {
+      "seed": 1,
+      "variant": "route_finance_anchor_none",
+      "score": {
+        "auc": 0.9464957281919486,
+        "ap": 0.8417811532012266,
+        "f1": 0.8105263157894737
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "anchor_both4",
+      "score": {
+        "auc": 0.9616380721791679,
+        "ap": 0.8943258172186871,
+        "f1": 0.8305084745762712
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "route_survey_tree_only",
+      "score": {
+        "auc": 0.9619952965458387,
+        "ap": 0.8950422951562433,
+        "f1": 0.8467966573816156
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "route_survey_linear_only",
+      "score": {
+        "auc": 0.9636524206912291,
+        "ap": 0.8974376223437269,
+        "f1": 0.8179271708683473
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "route_survey_anchor_none",
+      "score": {
+        "auc": 0.9623822896097325,
+        "ap": 0.8951959531696534,
+        "f1": 0.8140161725067385
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "route_finance_tree_only",
+      "score": {
+        "auc": 0.9619754507476905,
+        "ap": 0.8966955428242078,
+        "f1": 0.8351648351648352
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "route_finance_linear_only",
+      "score": {
+        "auc": 0.9594748801809937,
+        "ap": 0.8844544210601691,
+        "f1": 0.8035190615835777
+      }
+    },
+    {
+      "seed": 2,
+      "variant": "route_finance_anchor_none",
+      "score": {
+        "auc": 0.9555354892485388,
+        "ap": 0.8758756629741451,
+        "f1": 0.8172043010752689
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "anchor_both4",
+      "score": {
+        "auc": 0.964674479295871,
+        "ap": 0.8987294556500184,
+        "f1": 0.8152492668621701
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "route_survey_tree_only",
+      "score": {
+        "auc": 0.9625807475912163,
+        "ap": 0.8943363526138428,
+        "f1": 0.814404432132964
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "route_survey_linear_only",
+      "score": {
+        "auc": 0.9637020351866001,
+        "ap": 0.898776767233693,
+        "f1": 0.8193384223918575
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "route_survey_anchor_none",
+      "score": {
+        "auc": 0.9618662988578743,
+        "ap": 0.8944753387308795,
+        "f1": 0.8086253369272237
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "route_finance_tree_only",
+      "score": {
+        "auc": 0.9632555047282614,
+        "ap": 0.8975430062526282,
+        "f1": 0.8087431693989071
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "route_finance_linear_only",
+      "score": {
+        "auc": 0.9593458824930291,
+        "ap": 0.8868856742367022,
+        "f1": 0.8154761904761905
+      }
+    },
+    {
+      "seed": 3,
+      "variant": "route_finance_anchor_none",
+      "score": {
+        "auc": 0.955188187780942,
+        "ap": 0.8775988836577124,
+        "f1": 0.7945205479452054
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "anchor_both4",
+      "score": {
+        "auc": 0.9643172549292001,
+        "ap": 0.8996899742652348,
+        "f1": 0.8283378746594006
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "route_survey_tree_only",
+      "score": {
+        "auc": 0.9634142711134485,
+        "ap": 0.8969797412432688,
+        "f1": 0.8296703296703297
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "route_survey_linear_only",
+      "score": {
+        "auc": 0.9617373011699099,
+        "ap": 0.8872656900061854,
+        "f1": 0.8232189973614775
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "route_survey_anchor_none",
+      "score": {
+        "auc": 0.9613503081060162,
+        "ap": 0.8866730990218165,
+        "f1": 0.8188976377952756
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "route_finance_tree_only",
+      "score": {
+        "auc": 0.9585322047689453,
+        "ap": 0.890819784148108,
+        "f1": 0.8042328042328042
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "route_finance_linear_only",
+      "score": {
+        "auc": 0.9598420274467389,
+        "ap": 0.8849090408821252,
+        "f1": 0.8092485549132948
+      }
+    },
+    {
+      "seed": 42,
+      "variant": "route_finance_anchor_none",
+      "score": {
+        "auc": 0.9557637159272454,
+        "ap": 0.8803225925898719,
+        "f1": 0.8066298342541437
+      }
+    }
+  ],
+  "summary": {
+    "anchor_both4": {
+      "tree": [
+        "自己資本比率",
+        "負債比率",
+        "ROA",
+        "ROE"
+      ],
+      "linear": [
+        "自己資本比率",
+        "負債比率",
+        "ROA",
+        "ROE"
+      ],
+      "auc": {
+        "mean": 0.9613205394087936,
+        "delta_vs_asym": 0.0,
+        "wins_vs_asym": 0
+      },
+      "ap": {
+        "mean": 0.8899472330857888,
+        "delta_vs_asym": 0.0,
+        "wins_vs_asym": 0
+      },
+      "f1": {
+        "mean": 0.8205877616315244,
+        "delta_vs_asym": 0.0,
+        "wins_vs_asym": 0
+      }
+    },
+    "route_survey_tree_only": {
+      "tree": [
+        "自己資本比率",
+        "負債比率",
+        "ROA",
+        "ROE"
+      ],
+      "linear": [
+        "自己資本比率",
+        "負債比率",
+        "ROA",
+        "ROE"
+      ],
+      "auc": {
+        "mean": 0.9605366303819324,
+        "delta_vs_asym": -0.0007839090268612958,
+        "wins_vs_asym": 2
+      },
+      "ap": {
+        "mean": 0.8885976359638678,
+        "delta_vs_asym": -0.0013495971219208204,
+        "wins_vs_asym": 2
+      },
+      "f1": {
+        "mean": 0.8201618804987995,
+        "delta_vs_asym": -0.00042588113272485907,
+        "wins_vs_asym": 2
+      }
+    },
+    "route_survey_linear_only": {
+      "tree": [
+        "自己資本比率",
+        "負債比率",
+        "ROA",
+        "ROE"
+      ],
+      "linear": [
+        "自己資本比率",
+        "負債比率",
+        "ROA",
+        "ROE"
+      ],
+      "auc": {
+        "mean": 0.9603738948371155,
+        "delta_vs_asym": -0.000946644571678057,
+        "wins_vs_asym": 2
+      },
+      "ap": {
+        "mean": 0.8849670947306991,
+        "delta_vs_asym": -0.004980138355089569,
+        "wins_vs_asym": 2
+      },
+      "f1": {
+        "mean": 0.8160813482296161,
+        "delta_vs_asym": -0.0045064134019082045,
+        "wins_vs_asym": 2
+      }
+    },
+    "route_survey_anchor_none": {
+      "tree": [
+        "自己資本比率",
+        "負債比率",
+        "ROA",
+        "ROE"
+      ],
+      "linear": [
+        "自己資本比率",
+        "負債比率",
+        "ROA",
+        "ROE"
+      ],
+      "auc": {
+        "mean": 0.9593776357700665,
+        "delta_vs_asym": -0.001942903638727045,
+        "wins_vs_asym": 1
+      },
+      "ap": {
+        "mean": 0.8844856346273249,
+        "delta_vs_asym": -0.005461598458463812,
+        "wins_vs_asym": 1
+      },
+      "f1": {
+        "mean": 0.8108619288057988,
+        "delta_vs_asym": -0.009725832825725544,
+        "wins_vs_asym": 1
+      }
+    },
+    "route_finance_tree_only": {
+      "tree": [
+        "自己資本比率",
+        "負債比率",
+        "ROA",
+        "ROE"
+      ],
+      "linear": [
+        "自己資本比率",
+        "負債比率",
+        "ROA",
+        "ROE"
+      ],
+      "auc": {
+        "mean": 0.9580400289748653,
+        "delta_vs_asym": -0.0032805104339283853,
+        "wins_vs_asym": 1
+      },
+      "ap": {
+        "mean": 0.8840412680807548,
+        "delta_vs_asym": -0.005905965005033931,
+        "wins_vs_asym": 1
+      },
+      "f1": {
+        "mean": 0.8092568089741634,
+        "delta_vs_asym": -0.011330952657360926,
+        "wins_vs_asym": 1
+      }
+    },
+    "route_finance_linear_only": {
+      "tree": [
+        "自己資本比率",
+        "負債比率",
+        "ROA",
+        "ROE"
+      ],
+      "linear": [
+        "自己資本比率",
+        "負債比率",
+        "ROA",
+        "ROE"
+      ],
+      "auc": {
+        "mean": 0.956087202437064,
+        "delta_vs_asym": -0.0052333369717296515,
+        "wins_vs_asym": 0
+      },
+      "ap": {
+        "mean": 0.8733612222293328,
+        "delta_vs_asym": -0.01658601085645577,
+        "wins_vs_asym": 0
+      },
+      "f1": {
+        "mean": 0.8093743103395254,
+        "delta_vs_asym": -0.011213451291998845,
+        "wins_vs_asym": 2
+      }
+    },
+    "route_finance_anchor_none": {
+      "tree": [
+        "自己資本比率",
+        "負債比率",
+        "ROA",
+        "ROE"
+      ],
+      "linear": [
+        "自己資本比率",
+        "負債比率",
+        "ROA",
+        "ROE"
+      ],
+      "auc": {
+        "mean": 0.9533524514522164,
+        "delta_vs_asym": -0.007968087956577352,
+        "wins_vs_asym": 0
+      },
+      "ap": {
+        "mean": 0.8699831349169342,
+        "delta_vs_asym": -0.019964098168854427,
+        "wins_vs_asym": 0
+      },
+      "f1": {
+        "mean": 0.804723568233871,
+        "delta_vs_asym": -0.01586419339765337,
+        "wins_vs_asym": 0
+      }
+    }
+  }
+}
