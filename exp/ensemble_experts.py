@@ -58,7 +58,7 @@ from embedding_features import (  # noqa: E402
 )
 from expert_groups import (  # noqa: E402
     FINANCE_ISNA_COLS, SURVEY_ISNA_COLS, e0_anchor_cols, e1_finance_cols,
-    e2_survey_cols, e6_manual_cols, e7_cross_cols,
+    e2_survey_cols, e6_manual_cols, e7_cross_cols, route_h2_anchor_cols,
 )
 from meta_blend import (  # noqa: E402
     apply_meta, fit_meta, select_alpha, to_logit, uniform_blend,
@@ -296,13 +296,13 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
            + ("_llmcore4e0only" if llm_e0_core4_pruned_e0_only else "")
            + ("_llmcore4e0onlyh2" if llm_e0_core4_pruned_e0_only_h2 else "")
            + ("_llmcore4e0onlyh2h21" if llm_e0_core4_pruned_e0_only_h2_h21 else "")
-           + ("_llmcore4e0onlyh2both4" if llm_e0_core4_pruned_e0_only_h2_both4 else "")
+           + ("_llmcore4e0onlyh2both4v2eq" if llm_e0_core4_pruned_e0_only_h2_both4 else "")
            + ("_e0missing" if e0_restore_missing_flags else "")
            + ("_h21both" if h21_anchor_both else "")
            + ("_h49e0b" if h49_e0b_only else "")
            + ("_h54prune" if e1_h54_prune else "")
-           + ("_h2h7both4" if h2h7_both4 else "")
-           + ("_h2stablelev" if h2_stable_leverage else ""))
+           + ("_h2h7both4v2eq" if h2h7_both4 else "")
+           + ("_h2stablelevv2eq" if h2_stable_leverage else ""))
     path = os.path.join(OUT_DIR, f"_experts_seed{seed}{tag}.npz")
     if cache and os.path.exists(path):
         d = np.load(path)
@@ -377,16 +377,11 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
                if e0_only else c0)
     if h21_anchor_both:
         c0b += ["ソフト投資比率_売上", "流動比率"]
-    if h2h7_both4:
-        drop = {"負債比率", "ROE", "営業CFマージン"}
-        add = ["FCF比率", "現金ROA"]
-        c0 = [c for c in c0 if c not in drop] + [c for c in add if c not in c0]
-        c0b = [c for c in c0b if c not in drop] + [c for c in add if c not in c0b]
-    if h2_stable_leverage:
-        # E0(木)は現状維持、E0b(線形)だけ負債比率(不安定, std=588)を
-        # 負債資産比率(std=0.22)へ差替。5rep検証でE0bのみACCEPT(明確)、
-        # E0へ適用するとむしろ悪化したための非対称ルーティング。
-        c0b = [c for c in c0b if c != "負債比率"] + ["負債資産比率"]
+    h2_mode = ("h2h7_both4" if h2h7_both4 else
+               "h2_stable_leverage" if h2_stable_leverage else
+               "h2_both4" if llm_e0_core4_pruned_e0_only_h2_both4 else None)
+    if h2_mode is not None:
+        c0, c0b = route_h2_anchor_cols(c0, c0b, h2_mode)
     if h49_e0b_only:
         c0b = [c for c in c0b if c not in READINESS_COLS]
         c0b += ["展開段階_移行幅", "展開段階_scale_window"]
@@ -675,13 +670,13 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
                  + ("_llmcore4e0only" if llm_e0_core4_pruned_e0_only else "")
                  + ("_llmcore4e0onlyh2" if llm_e0_core4_pruned_e0_only_h2 else "")
                  + ("_llmcore4e0onlyh2h21" if llm_e0_core4_pruned_e0_only_h2_h21 else "")
-                 + ("_llmcore4e0onlyh2both4" if llm_e0_core4_pruned_e0_only_h2_both4 else "")
+                 + ("_llmcore4e0onlyh2both4v2eq" if llm_e0_core4_pruned_e0_only_h2_both4 else "")
                  + ("_e0missing" if e0_restore_missing_flags else "")
                  + ("_h21both" if h21_anchor_both else "")
                  + ("_h49e0b" if h49_e0b_only else "")
                  + ("_h54prune" if e1_h54_prune else "")
-                 + ("_h2h7both4" if h2h7_both4 else "")
-                 + ("_h2stablelev" if h2_stable_leverage else ""))
+                 + ("_h2h7both4v2eq" if h2h7_both4 else "")
+                 + ("_h2stablelevv2eq" if h2_stable_leverage else ""))
         t_tag = (f"_pos{test_pos}" if test_pos is not None
                  else f"_th{threshold}" if threshold is not None else "")
         out = output or (f"submission/submission_ensemble_experts_seed{seed}"

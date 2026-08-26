@@ -12,7 +12,12 @@ ensemble_experts.py はエキスパートOOFとメタ学習を同じ5分割の�
   4. 各エキスパートを A 全体で再学習し、B を予測する
   5. B 上で E0単体 / 等分ブレンド / メタ を比較する
 
-B はどのエキスパートもメタも閾値決定も見ていないため、ここでの差は本物。
+B はどのエキスパートもメタも閾値決定も見ないため、ここでの差を本判定に使う。
+
+注意（2026-08-26監査）:
+  旧実装は上記の意図に反し、LightGBMのearly stoppingへBラベルを渡していた。
+  現在は学習側の内部holdoutで木数を決めて全学習側へrefitするstrict方式が既定。
+  過去結果の再現に限り ``--legacy-leaky-lgbm`` で旧方式を明示できるが、採否には使わない。
 
 閾値則の比較（`--threshold-rules`）:
   exp020 は「順位付け(AUC/AP)は同等以上なのに閾値を当てられず F1 が 0/5」で
@@ -22,12 +27,14 @@ B はどのエキスパートもメタも閾値決定も見ていないため、
   B のラベルは見ない）。
 
   python exp/holdout_check.py [--n-reps 3] [--alpha 0.01]
-                              [--threshold-rules oof_best fold_mean rate half_f1]
+                              [--threshold-rules oof_best fold_mean fold_median
+                                                   plateau_mid rate half_f1]
 """
 import argparse
 import os
 import sys
 
+import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
@@ -43,7 +50,7 @@ from organization_features import (  # noqa: E402
 from text_features import TEXT_COL, build_model, nested_text_pred  # noqa: E402
 from expert_groups import (  # noqa: E402
     FINANCE_ISNA_COLS, SURVEY_ISNA_COLS, e0_anchor_cols, e1_finance_cols,
-    e2_survey_cols, e6_manual_cols, e7_cross_cols,
+    e2_survey_cols, e6_manual_cols, e7_cross_cols, route_h2_anchor_cols,
 )
 from ensemble_experts import (  # noqa: E402
     DX_SCORE_COL, E0B_NAME, E7_NAME, E8_NAME, E9_NAME, EXPERTS, GAM_NAME, LINEAR_C,
@@ -51,6 +58,7 @@ from ensemble_experts import (  # noqa: E402
     _survey_lr, build_features, e4_inputs, expert_names, fit_e0b, fit_e7,
     h30_inputs,
 )
+from harness import BASE_PARAMS  # noqa: E402
 from gam_model import GAM_C, fit_gam  # noqa: E402
 from embedding_knn import (  # noqa: E402
     KNN_DIM, KNN_DISTANCE_SCALE, KNN_NEIGHBORS, KNN_PRIOR_STRENGTH,
@@ -62,9 +70,32 @@ from meta_blend import (  # noqa: E402
 )
 
 
+def _strict_lgbm_predict(Xtr, ytr, Xtarget, seed):
+    """target のラベルを使わずに木数を決め、Xtr 全体で再学習して予測する。
+
+    従来の完全ホールドアウト実装は target=B のときにも ``y[B]`` を
+    early stoppingへ渡していた。ここでは学習集合内の固定5分割の先頭foldだけを
+    木数選択に使い、その木数で学習集合全体をfitし直す。したがって target は
+    特徴量しか参照されず、A内OOFと最終B予測のどちらも評価先ラベルから独立になる。
+    """
+    inner = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
+    fit_idx, stop_idx = next(inner.split(Xtr, ytr))
+    params = {**BASE_PARAMS, "seed": seed}
+    scout = lgb.train(
+        params,
+        lgb.Dataset(Xtr.iloc[fit_idx], ytr[fit_idx]),
+        num_boost_round=2000,
+        valid_sets=[lgb.Dataset(Xtr.iloc[stop_idx], ytr[stop_idx])],
+        callbacks=[lgb.early_stopping(100, verbose=False)],
+    )
+    rounds = max(1, int(scout.best_iteration))
+    final = lgb.train(params, lgb.Dataset(Xtr, ytr), num_boost_round=rounds)
+    return final.predict(Xtarget, num_iteration=rounds)
+
+
 def fit_predict_experts(X, y, txt, org, tr, target, seed, cols, e4=None,
                         e7_model=None, linear_c=None, h30=None, gam_c=None,
-                        knn=None):
+                        knn=None, strict_lgbm=True):
     """tr で全エキスパートを学習し、target 行を予測する。
 
     E0 のテキスト特徴は tr の内側CVで作る（tr 内で完結＝リーク無し）。
@@ -101,7 +132,10 @@ def fit_predict_experts(X, y, txt, org, tr, target, seed, cols, e4=None,
     A_tr, A_ta = Xtr[c0].copy(), Xta[c0].copy()
     A_tr[DX_SCORE_COL], A_ta[DX_SCORE_COL] = t_tr, t_ta
     A_tr[ORG_SCORE_COL], A_ta[ORG_SCORE_COL] = o_tr, o_ta
-    out["E0_anchor"], _ = _lgbm(A_tr, y[tr], A_ta, y[target], A_ta, seed)
+    if strict_lgbm:
+        out["E0_anchor"] = _strict_lgbm_predict(A_tr, y[tr], A_ta, seed)
+    else:
+        out["E0_anchor"], _ = _lgbm(A_tr, y[tr], A_ta, y[target], A_ta, seed)
     if linear_c is not None:
         B_tr, B_ta = Xtr[c0b].copy(), Xta[c0b].copy()
         B_tr[DX_SCORE_COL], B_ta[DX_SCORE_COL] = t_tr, t_ta
@@ -111,11 +145,17 @@ def fit_predict_experts(X, y, txt, org, tr, target, seed, cols, e4=None,
         out[GAM_NAME], _ = fit_gam(A_tr, y[tr], A_ta, A_ta, C=gam_c)
 
     for name, c in (("E1_finance", c1), ("E6_manual", c6)):
-        out[name], _ = _lgbm(Xtr[c], y[tr], Xta[c], y[target], Xta[c], seed)
+        if strict_lgbm:
+            out[name] = _strict_lgbm_predict(Xtr[c], y[tr], Xta[c], seed)
+        else:
+            out[name], _ = _lgbm(Xtr[c], y[tr], Xta[c], y[target], Xta[c], seed)
     out["E2_survey"], _ = _survey_lr(Xtr[c2], y[tr], Xta[c2], Xta[c2])
     if e7_model is not None:
-        out[E7_NAME], _ = fit_e7(Xtr[c7], y[tr], Xta[c7], y[target], Xta[c7],
-                                 seed, e7_model)
+        if strict_lgbm and e7_model == "lgbm":
+            out[E7_NAME] = _strict_lgbm_predict(Xtr[c7], y[tr], Xta[c7], seed)
+        else:
+            out[E7_NAME], _ = fit_e7(Xtr[c7], y[tr], Xta[c7], y[target],
+                                     Xta[c7], seed, e7_model)
     return out
 
 
@@ -162,7 +202,37 @@ def _best_th(y, p):
 
 
 # 閾値則。すべて A の情報だけで決める（rate のみ B のスコア分布を使うがラベルは見ない）。
-THRESHOLD_RULES = ("oof_best", "fold_mean", "rate", "half_f1")
+THRESHOLD_RULES = ("oof_best", "fold_mean", "fold_median", "plateau_mid",
+                   "rate", "half_f1")
+
+
+def _fold_curve_thresholds(pA, yA, folds):
+    """foldごとのF1曲線、従来argmax、同率最大中央の閾値を返す。"""
+    fold_curves, fold_argmax, fold_tie_mid = [], [], []
+    for _, va in folds:
+        curve = np.array([f1_score(yA[va], (pA[va] >= t).astype(int))
+                          for t in THS])
+        fold_curves.append(curve)
+        fold_argmax.append(float(THS[int(np.argmax(curve))]))
+        ties = THS[np.isclose(curve, curve.max(), rtol=0.0, atol=1e-12)]
+        fold_tie_mid.append(float(np.median(ties)))
+    return (np.vstack(fold_curves), np.asarray(fold_argmax),
+            np.asarray(fold_tie_mid))
+
+
+def _plateau_midpoint(fold_curves, tol=0.005):
+    """fold平均F1曲線の最大点を含む連続プラトーの中央を返す。"""
+    mean_curve = fold_curves.mean(axis=0)
+    peak = int(np.argmax(mean_curve))
+    inside = mean_curve >= mean_curve[peak] - tol
+    left = peak
+    while left > 0 and inside[left - 1]:
+        left -= 1
+    right = peak
+    while right + 1 < len(inside) and inside[right + 1]:
+        right += 1
+    midpoint = (THS[left] + THS[right]) / 2.0
+    return float(THS[int(np.argmin(np.abs(THS - midpoint)))])
 
 
 def _thresholds(pA, yA, pB, folds, rules):
@@ -170,6 +240,9 @@ def _thresholds(pA, yA, pB, folds, rules):
 
     oof_best  A全体のOOFでF1最大（現行。argmaxを1点で取るので過学習しやすい）
     fold_mean A内5foldそれぞれのF1最大閾値の平均（平均化で分散を落とす）
+    fold_median foldごとの最適閾値の中央値（外れfoldへの耐性を上げる）
+    plateau_mid fold別F1曲線を平均し、最大点から0.005以内の連続な高原の中央。
+                離れた別ピークは混ぜず、argmax一点への合わせ込みを抑える
     rate      A での予測正例率を B のスコア分位点に転写（rate matching）
     half_f1   達成F1の半分。校正済み確率のF1最適閾値は F1*/2 という既知の関係を
               使う。自由度が最小＝最も過学習しにくい
@@ -178,11 +251,19 @@ def _thresholds(pA, yA, pB, folds, rules):
     best = None
     if {"oof_best", "rate", "half_f1"} & set(rules):
         best = _best_th(yA, pA)
+    fold_curves = fold_argmax = fold_tie_mid = None
+    if {"fold_mean", "fold_median", "plateau_mid"} & set(rules):
+        fold_curves, fold_argmax, fold_tie_mid = _fold_curve_thresholds(
+            pA, yA, folds)
     for r in rules:
         if r == "oof_best":
             out[r] = float(best)
         elif r == "fold_mean":
-            out[r] = float(np.mean([_best_th(yA[va], pA[va]) for _, va in folds]))
+            out[r] = float(fold_argmax.mean())
+        elif r == "fold_median":
+            out[r] = float(np.median(fold_tie_mid))
+        elif r == "plateau_mid":
+            out[r] = _plateau_midpoint(fold_curves)
         elif r == "rate":
             rate = float((pA >= best).mean())
             out[r] = float(np.quantile(pB, 1 - rate)) if 0 < rate < 1 else float(best)
@@ -200,7 +281,7 @@ def _score_at(y, p, th):
 
 def one_rep(X, y, txt, org, cols, rep, alpha, test_size, rules=("oof_best",),
             target="zero", e4=None, e7_model=None, linear_c=None, h30=None,
-            gam_c=None, knn=None):
+            gam_c=None, knn=None, strict_lgbm=True):
     idx = np.arange(len(y))
     A, B = train_test_split(idx, test_size=test_size, stratify=y, random_state=rep)
     cross, linear = e7_model is not None, linear_c is not None
@@ -216,7 +297,8 @@ def one_rep(X, y, txt, org, cols, rep, alpha, test_size, rules=("oof_best",),
     folds = list(skf.split(A, y[A]))
     for tr, va in folds:
         p = fit_predict_experts(X, y, txt, org, A[tr], A[va], rep, cols, e4,
-                                e7_model, linear_c, h30, gam_c, knn)
+                                e7_model, linear_c, h30, gam_c, knn,
+                                strict_lgbm)
         for n in names:
             oof[n][va] = p[n]
 
@@ -233,7 +315,7 @@ def one_rep(X, y, txt, org, cols, rep, alpha, test_size, rules=("oof_best",),
 
     # 4. A全体で再学習 -> B を予測
     pb = fit_predict_experts(X, y, txt, org, A, B, rep, cols, e4, e7_model,
-                             linear_c, h30, gam_c, knn)
+                             linear_c, h30, gam_c, knn, strict_lgbm)
     yB = y[B]
 
     # A側/B側のスコアを同じ形で並べる（閾値はAから、評価はBで）
@@ -264,7 +346,8 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
         llm_e0_core4_pruned_e0_only_h2_both4=False, e6_drop_dx_manual=False,
         e6_add_llm4=False, e1_add_h2=False, e6_h52_prune=False,
         e1_h54_prune=False, e6_add_noise_col=False, seed_offset=0,
-        e2_h57_subscales=False, h2h7_both4=False, h2_stable_leverage=False):
+        e2_h57_subscales=False, h2h7_both4=False, h2_stable_leverage=False,
+        strict_lgbm=True):
     train, test = pd.read_csv("data/train.csv"), pd.read_csv("data/test.csv")
     X, y, _ = build_features(train, test, finance_ratios=finance_ratios,
                              survey_step=survey_step, cross=cross,
@@ -308,21 +391,11 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
     c0b = ([c for c in c0_all if not c.startswith("LLM_")]
            if (llm_e0_core4_pruned_e0_only_h2_both4 or h2h7_both4
                or h2_stable_leverage) else c0)
-    if h2h7_both4:
-        # legacy_batch1診断(5seed)で自己資本比率/ROA/FCF比率/現金ROAが
-        # AUC・APともに5/5満点だった組み合わせ。現行の自己資本比率/負債比率/
-        # ROA/ROEから負債比率・ROEを外し、FCF比率・現金ROAへ差し替える。
-        drop = {"負債比率", "ROE", "営業CFマージン"}
-        add = ["FCF比率", "現金ROA"]
-        c0 = [c for c in c0 if c not in drop] + [c for c in add if c not in c0]
-        c0b = [c for c in c0b if c not in drop] + [c for c in add if c not in c0b]
-    if h2_stable_leverage:
-        # 2026-08-26 Public急落の原因調査: 負債比率(負債/自己資本)は自己資本が
-        # 薄い企業で爆発する不安定な比率(train実測std=588)。5rep診断で
-        # E0(木)にはむしろ悪化(0/5)・E0b(線形)には明確ACCEPT(5/5)という
-        # 正反対の反応だったため、E0は現状維持、E0bだけ負債資産比率(std=0.22)
-        # へ差し替える非対称ルーティングにする。
-        c0b = [c for c in c0b if c != "負債比率"] + ["負債資産比率"]
+    h2_mode = ("h2h7_both4" if h2h7_both4 else
+               "h2_stable_leverage" if h2_stable_leverage else
+               "h2_both4" if llm_e0_core4_pruned_e0_only_h2_both4 else None)
+    if h2_mode is not None:
+        c0, c0b = route_h2_anchor_cols(c0, c0b, h2_mode)
     c6 = e6_manual_cols(X.columns, drop_dx_manual=e6_drop_dx_manual,
                        add_llm4=e6_add_llm4, h52_prune=e6_h52_prune)
     if e6_add_noise_col:
@@ -352,7 +425,8 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
           f"{', H2の負債比率を安定版の負債資産比率へ差替' if h2_stable_leverage else ''}"
           f"{', E8(H30 3文書間絶対差embedding)を追加' if h30_absdiff else ''}"
           f"{f', E0c(H31 94列GAM, C={gam_c:g})を追加' if gam else ''}"
-          f"{f', E9(H32 embedding cosine-kNN, dim={KNN_DIM}, k={KNN_NEIGHBORS}, scale={KNN_DISTANCE_SCALE:g}, prior={KNN_PRIOR_STRENGTH:g})を追加' if embed_knn else ''}")
+          f"{f', E9(H32 embedding cosine-kNN, dim={KNN_DIM}, k={KNN_NEIGHBORS}, scale={KNN_DISTANCE_SCALE:g}, prior={KNN_PRIOR_STRENGTH:g})を追加' if embed_knn else ''}"
+          f"{', strict LGBM(Bラベル非参照)' if strict_lgbm else ''}")
 
     if seed_offset:
         print(f"seed_offset={seed_offset}: 未使用のfresh seedで監査 "
@@ -362,7 +436,8 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
         seed = rep + seed_offset
         print(f"  rep {rep + 1}/{n_reps} (seed={seed}) ...", flush=True)
         r, w, a = one_rep(X, y, txt, org, cols, seed, alpha, test_size, rules,
-                          target, e4, e7, lin, h30, gam_value, knn)
+                          target, e4, e7, lin, h30, gam_value, knn,
+                          strict_lgbm)
         ws.append(w)
         alphas.append(a)
         for (m, rule), v in r.items():
@@ -534,6 +609,14 @@ if __name__ == "__main__":
                    help="A/B分割・fold・モデルseedに一律で足すオフセット。"
                         "0..n_reps-1のdevelopment seedと重ならないfresh seedで"
                         "監査するときに使う(signate_information_quality_research.md 21節)")
+    strict = p.add_mutually_exclusive_group()
+    strict.add_argument("--strict-lgbm", dest="strict_lgbm", action="store_true",
+                        help="LightGBMの木数を学習側だけで決定（既定）")
+    strict.add_argument("--legacy-leaky-lgbm", dest="strict_lgbm",
+                        action="store_false",
+                        help="過去再現専用: 評価先ラベルをearly stoppingへ渡す旧方式。"
+                             "本判定には使用禁止")
+    p.set_defaults(strict_lgbm=True)
     p.add_argument("--out-csv", default=None,
                    help="repごとの全スコアをCSV保存")
     p.add_argument("--threshold-rules", nargs="+", default=["oof_best"],
@@ -549,4 +632,5 @@ if __name__ == "__main__":
         a.llm_e0_core4_pruned, a.llm_e0_core4_pruned_e0_only_h2_both4,
         a.e6_drop_dx_manual, a.e6_add_llm4, a.e1_add_h2, a.e6_h52_prune,
         a.e1_h54_prune, a.e6_add_noise_col, a.seed_offset,
-        a.e2_h57_subscales, a.h2h7_both4, a.h2_stable_leverage)
+        a.e2_h57_subscales, a.h2h7_both4, a.h2_stable_leverage,
+        a.strict_lgbm)

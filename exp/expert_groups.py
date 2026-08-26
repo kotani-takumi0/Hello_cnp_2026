@@ -57,6 +57,45 @@ def e0_anchor_cols(all_cols):
 
 
 H2_FINANCE_HEALTH_COLS = ("自己資本比率", "負債比率", "ROA", "ROE")
+H2_H7_CASH_COLS = ("自己資本比率", "ROA", "FCF比率", "現金ROA")
+H2_STABLE_E0B_COLS = ("自己資本比率", "負債資産比率", "ROA", "ROE")
+
+
+def route_h2_anchor_cols(c0, c0b, mode):
+    """H2系の列をE0(木)/E0b(線形)へ一元的にルーティングする。
+
+    ``自己資本比率`` はE7の親列でもあるため ``EXPERT_ONLY_COLS`` に含まれ、
+    ``e0_anchor_cols`` の段階で落ちる。旧実装はこの衝突を見落とし、名称上の
+    both4が実質3列になっていた。ここで明示復元し、意図した集合をassertする。
+    """
+    valid = {"h2_both4", "h2h7_both4", "h2_stable_leverage"}
+    if mode not in valid:
+        raise ValueError(f"未知のH2ルーティング: {mode}")
+    c0, c0b = list(c0), list(c0b)
+    for cols in (c0, c0b):
+        if "自己資本比率" not in cols:
+            cols.append("自己資本比率")
+
+    if mode == "h2h7_both4":
+        drop = {"負債比率", "ROE", "営業CFマージン"}
+        add = ("FCF比率", "現金ROA")
+        c0 = [c for c in c0 if c not in drop]
+        c0b = [c for c in c0b if c not in drop]
+        c0 += [c for c in add if c not in c0]
+        c0b += [c for c in add if c not in c0b]
+        expected0 = expected0b = set(H2_H7_CASH_COLS)
+    elif mode == "h2_stable_leverage":
+        c0b = [c for c in c0b if c != "負債比率"]
+        if "負債資産比率" not in c0b:
+            c0b.append("負債資産比率")
+        expected0 = set(H2_FINANCE_HEALTH_COLS)
+        expected0b = set(H2_STABLE_E0B_COLS)
+    else:
+        expected0 = expected0b = set(H2_FINANCE_HEALTH_COLS)
+
+    assert expected0 <= set(c0), f"E0のH2列不足: {expected0 - set(c0)}"
+    assert expected0b <= set(c0b), f"E0bのH2列不足: {expected0b - set(c0b)}"
+    return c0, c0b
 
 
 # H54: target-freeなSpearman相関(signed-log変換後、train742行、yは一切未使用)で
