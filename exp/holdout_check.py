@@ -78,7 +78,7 @@ def fit_predict_experts(X, y, txt, org, tr, target, seed, cols, e4=None,
     E7 の12列は EXPERT_ONLY_COLS なので E0 は見ておらず、こちらも E0 の予測は
     --cross の有無で完全一致する。
     """
-    c0, c1, c2, c6, c7 = cols
+    c0, c0b, c1, c2, c6, c7 = cols
     e4_in, e4_model = e4 if e4 is not None else (org, build_org_model)
     Xtr, Xta = X.iloc[tr], X.iloc[target]
     out = {}
@@ -103,7 +103,10 @@ def fit_predict_experts(X, y, txt, org, tr, target, seed, cols, e4=None,
     A_tr[ORG_SCORE_COL], A_ta[ORG_SCORE_COL] = o_tr, o_ta
     out["E0_anchor"], _ = _lgbm(A_tr, y[tr], A_ta, y[target], A_ta, seed)
     if linear_c is not None:
-        out[E0B_NAME], _ = fit_e0b(A_tr, y[tr], A_ta, A_ta, linear_c)
+        B_tr, B_ta = Xtr[c0b].copy(), Xta[c0b].copy()
+        B_tr[DX_SCORE_COL], B_ta[DX_SCORE_COL] = t_tr, t_ta
+        B_tr[ORG_SCORE_COL], B_ta[ORG_SCORE_COL] = o_tr, o_ta
+        out[E0B_NAME], _ = fit_e0b(B_tr, y[tr], B_ta, B_ta, linear_c)
     if gam_c is not None:
         out[GAM_NAME], _ = fit_gam(A_tr, y[tr], A_ta, A_ta, C=gam_c)
 
@@ -257,11 +260,27 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
         target="zero", survey_step=False, org_embed=False, concat_embed=False,
         cross=False, e7_model="lgbm", linear=False, linear_c=LINEAR_C,
         h30_absdiff=False, gam=False, gam_c=GAM_C, embed_knn=False,
-        out_csv=None, llm_e0_core4_pruned=False):
+        out_csv=None, llm_e0_core4_pruned=False,
+        llm_e0_core4_pruned_e0_only_h2_both4=False, e6_drop_dx_manual=False,
+        e6_add_llm4=False, e1_add_h2=False, e6_h52_prune=False,
+        e1_h54_prune=False, e6_add_noise_col=False, seed_offset=0,
+        e2_h57_subscales=False, h2h7_both4=False, h2_stable_leverage=False):
     train, test = pd.read_csv("data/train.csv"), pd.read_csv("data/test.csv")
     X, y, _ = build_features(train, test, finance_ratios=finance_ratios,
                              survey_step=survey_step, cross=cross,
-                             llm_makebuy=llm_e0_core4_pruned)
+                             llm_makebuy=(llm_e0_core4_pruned or
+                                          llm_e0_core4_pruned_e0_only_h2_both4 or
+                                          h2h7_both4 or h2_stable_leverage),
+                             h2_restore=(llm_e0_core4_pruned_e0_only_h2_both4
+                                        or e1_add_h2 or h2h7_both4
+                                        or h2_stable_leverage),
+                             h57_subscales=e2_h57_subscales,
+                             h7_restore=h2h7_both4)
+    if e6_add_noise_col:
+        # ガードレール(-0.002)が本当に信号を検出しているか、完全な乱数列を
+        # 1本足すだけでどれだけΔF1が動くかを測るための対照実験（2026-08-25）。
+        X = X.copy()
+        X["_NOISE_CONTROL"] = np.random.RandomState(0).uniform(size=len(X))
     txt = train[TEXT_COL].fillna("").astype(str).values
     org = load_org_text(train)
     # E4 の入力/モデル。org_embed=False なら現行と完全一致（e4=None 相当）。
@@ -277,16 +296,42 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
         knn_train, _ = load_knn_embeddings()
         knn = (knn_train, build_knn_model)
     c0 = e0_anchor_cols(X.columns)
-    if llm_e0_core4_pruned:
+    if (llm_e0_core4_pruned or llm_e0_core4_pruned_e0_only_h2_both4
+            or h2h7_both4 or h2_stable_leverage):
         missing = set(FINANCE_ISNA_COLS + SURVEY_ISNA_COLS)
         core4 = {"LLM_need_score", "LLM_make_limitation_score",
                  "LLM_buy_openness_score",
                  "LLM_internal_training_capability_score"}
         c0 = [c for c in c0 if not c.startswith("DX展望_") and c not in missing
               and (not c.startswith("LLM_") or c in core4)]
-    cols = (c0,
-            e1_finance_cols(with_ratios=finance_ratios),
-            e2_survey_cols(with_step=survey_step), e6_manual_cols(X.columns),
+    c0_all = e0_anchor_cols(X.columns)
+    c0b = ([c for c in c0_all if not c.startswith("LLM_")]
+           if (llm_e0_core4_pruned_e0_only_h2_both4 or h2h7_both4
+               or h2_stable_leverage) else c0)
+    if h2h7_both4:
+        # legacy_batch1診断(5seed)で自己資本比率/ROA/FCF比率/現金ROAが
+        # AUC・APともに5/5満点だった組み合わせ。現行の自己資本比率/負債比率/
+        # ROA/ROEから負債比率・ROEを外し、FCF比率・現金ROAへ差し替える。
+        drop = {"負債比率", "ROE", "営業CFマージン"}
+        add = ["FCF比率", "現金ROA"]
+        c0 = [c for c in c0 if c not in drop] + [c for c in add if c not in c0]
+        c0b = [c for c in c0b if c not in drop] + [c for c in add if c not in c0b]
+    if h2_stable_leverage:
+        # 2026-08-26 Public急落の原因調査: 負債比率(負債/自己資本)は自己資本が
+        # 薄い企業で爆発する不安定な比率(train実測std=588)。5rep診断で
+        # E0(木)にはむしろ悪化(0/5)・E0b(線形)には明確ACCEPT(5/5)という
+        # 正反対の反応だったため、E0は現状維持、E0bだけ負債資産比率(std=0.22)
+        # へ差し替える非対称ルーティングにする。
+        c0b = [c for c in c0b if c != "負債比率"] + ["負債資産比率"]
+    c6 = e6_manual_cols(X.columns, drop_dx_manual=e6_drop_dx_manual,
+                       add_llm4=e6_add_llm4, h52_prune=e6_h52_prune)
+    if e6_add_noise_col:
+        c6 = c6 + ["_NOISE_CONTROL"]
+    cols = (c0, c0b,
+            e1_finance_cols(with_ratios=finance_ratios, with_h2=e1_add_h2,
+                            h54_prune=e1_h54_prune),
+            e2_survey_cols(with_step=survey_step,
+                          h57_subscales=e2_h57_subscales), c6,
             e7_cross_cols() if cross else None)
     print(f"A={int(len(y) * (1 - test_size))}行 / B(ホールドアウト)={int(len(y) * test_size)}行"
           f" x {n_reps}リピート, alpha={alpha}, メタ縮小先={target}"
@@ -297,14 +342,26 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
           f"{f', E7(H27 不満×財務, {e7_model})を追加' if cross else ''}"
           f"{f', E0b(H28 94列one-hot+LR, C={linear_c:g})を追加' if linear else ''}"
           f"{', E0/E0bをLLM親4軸のpruned構成へ変更' if llm_e0_core4_pruned else ''}"
+          f"{', E0をpruned+LLM親4軸、H2財務4列をE0/E0bへ共有' if llm_e0_core4_pruned_e0_only_h2_both4 else ''}"
+          f"{', E6のDX展望_手動辞書22列を削除' if e6_drop_dx_manual else ''}"
+          f"{', E1にH2財務健全性比4本を追加' if e1_add_h2 else ''}"
+          f"{', E6にH52 target-free重複/レアフラグ10本を削除' if e6_h52_prune else ''}"
+          f"{', E1にH54 target-free会計恒等式重複5本を削除' if e1_h54_prune else ''}"
+          f"{', E2をH57意味サブスケール4本へ置換(生11列は使わない)' if e2_h57_subscales else ''}"
+          f"{', H2財務4本のうち負債比率/ROEをFCF比率/現金ROAへ差替(H2+H7)' if h2h7_both4 else ''}"
+          f"{', H2の負債比率を安定版の負債資産比率へ差替' if h2_stable_leverage else ''}"
           f"{', E8(H30 3文書間絶対差embedding)を追加' if h30_absdiff else ''}"
           f"{f', E0c(H31 94列GAM, C={gam_c:g})を追加' if gam else ''}"
           f"{f', E9(H32 embedding cosine-kNN, dim={KNN_DIM}, k={KNN_NEIGHBORS}, scale={KNN_DISTANCE_SCALE:g}, prior={KNN_PRIOR_STRENGTH:g})を追加' if embed_knn else ''}")
 
+    if seed_offset:
+        print(f"seed_offset={seed_offset}: 未使用のfresh seedで監査 "
+              f"(実seed={seed_offset}..{seed_offset + n_reps - 1})")
     recs, ws, alphas = [], [], []
     for rep in range(n_reps):
-        print(f"  rep {rep + 1}/{n_reps} ...", flush=True)
-        r, w, a = one_rep(X, y, txt, org, cols, rep, alpha, test_size, rules,
+        seed = rep + seed_offset
+        print(f"  rep {rep + 1}/{n_reps} (seed={seed}) ...", flush=True)
+        r, w, a = one_rep(X, y, txt, org, cols, seed, alpha, test_size, rules,
                           target, e4, e7, lin, h30, gam_value, knn)
         ws.append(w)
         alphas.append(a)
@@ -453,6 +510,30 @@ if __name__ == "__main__":
                    help="H32のDX展望+組織図embedding cosine-kNNを追加")
     p.add_argument("--llm-e0-core4-pruned", action="store_true",
                    help="E0/E0bのDX辞書・欠損flagsを削りLLM親4軸へ置換")
+    p.add_argument("--llm-e0-core4-pruned-e0-only-h2-both4", action="store_true",
+                   help="現行H2-both4: E0だけpruned+LLM親4軸、H2財務4列をE0/E0bへ共有")
+    p.add_argument("--e6-drop-dx-manual", action="store_true",
+                   help="E6からDX展望_手動辞書22列を削る(E0で実証済みのノイズ除去をE6にも適用)")
+    p.add_argument("--e6-add-llm4", action="store_true",
+                   help="--e6-drop-dx-manualと併用し、削った分をLLM親4軸で置換する")
+    p.add_argument("--e1-add-h2", action="store_true",
+                   help="E1にH2財務健全性比4本(自己資本比率/負債比率/ROA/ROE)を追加")
+    p.add_argument("--e6-h52-prune", action="store_true",
+                   help="E6のH52 target-free重複/レアフラグ10本を削除(signate_information_quality_research.md)")
+    p.add_argument("--e1-h54-prune", action="store_true",
+                   help="E1のH54 target-free会計恒等式重複5本を削除(signate_information_quality_research.md)")
+    p.add_argument("--e6-add-noise-col", action="store_true",
+                   help="ガードレール較正用: E6に完全な乱数列を1本追加するだけの対照実験")
+    p.add_argument("--e2-h57-subscales", action="store_true",
+                   help="E2を生11列からH57意味サブスケール4本へ置換(signate_information_quality_research.md)")
+    p.add_argument("--h2h7-both4", action="store_true",
+                   help="H2財務4本の負債比率/ROEをFCF比率/現金ROAへ差替(legacy_batch1で5/5満点だった組合せ)")
+    p.add_argument("--h2-stable-leverage", action="store_true",
+                   help="H2の負債比率(不安定, train std=588)を負債資産比率(std=0.22)へ差替")
+    p.add_argument("--seed-offset", type=int, default=0,
+                   help="A/B分割・fold・モデルseedに一律で足すオフセット。"
+                        "0..n_reps-1のdevelopment seedと重ならないfresh seedで"
+                        "監査するときに使う(signate_information_quality_research.md 21節)")
     p.add_argument("--out-csv", default=None,
                    help="repごとの全スコアをCSV保存")
     p.add_argument("--threshold-rules", nargs="+", default=["oof_best"],
@@ -465,4 +546,7 @@ if __name__ == "__main__":
         tuple(a.threshold_rules), a.meta_target, a.survey_step, a.org_embed,
         a.concat_embed, a.cross, a.e7_model, a.linear, a.linear_c,
         a.h30_absdiff, a.gam, a.gam_c, a.embed_knn, a.out_csv,
-        a.llm_e0_core4_pruned)
+        a.llm_e0_core4_pruned, a.llm_e0_core4_pruned_e0_only_h2_both4,
+        a.e6_drop_dx_manual, a.e6_add_llm4, a.e1_add_h2, a.e6_h52_prune,
+        a.e1_h54_prune, a.e6_add_noise_col, a.seed_offset,
+        a.e2_h57_subscales, a.h2h7_both4, a.h2_stable_leverage)

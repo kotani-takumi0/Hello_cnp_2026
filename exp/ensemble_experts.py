@@ -49,7 +49,7 @@ from dx_outlook_features import (  # noqa: E402
 from company_overview_features import add_company_overview_six_rate_flags  # noqa: E402
 from cross_features import add_cross_features  # noqa: E402
 from finance_ratio_features import FINANCE_RATIO_COLS, add_finance_ratios  # noqa: E402
-from survey_features import add_survey_features  # noqa: E402
+from survey_features import add_survey_features, add_h57_subscales  # noqa: E402
 from text_features import TEXT_COL, build_model, nested_text_pred  # noqa: E402
 from embedding_features import (  # noqa: E402
     CONCAT_EMB_C, CONCAT_EMB_DIM, CONCAT_SLUGS, EMB_LR_PARAMS, ORG_EMB_C,
@@ -71,7 +71,7 @@ from embedding_knn import (  # noqa: E402
 from llm_make_or_buy_features import (  # noqa: E402
     LLM_FEATURE_COLS, add_llm_make_or_buy_features,
 )
-from hypotheses import h2_financial_health  # noqa: E402
+from hypotheses import h2_financial_health, h7_cash_slack  # noqa: E402
 from readiness_to_scale_features import READINESS_COLS, add_readiness_features  # noqa: E402
 
 H2_RESTORE_COLS = ("自己資本比率", "ROA")
@@ -116,7 +116,8 @@ def expert_names(cross=False, linear=False, h30_absdiff=False, gam=False,
 
 def build_features(train, test, finance_ratios=False, survey_step=False,
                    cross=False, h37_priority=False, llm_makebuy=False,
-                   h2_restore=False, h21_restore=False, h49_restore=False):
+                   h2_restore=False, h21_restore=False, h49_restore=False,
+                   h57_subscales=False, h7_restore=False):
     """train/test に行単位の決定的特徴を積む。fold内スコアはここでは足さない。
 
     finance_ratios=True のとき H21 の財務比4本も積む。この列は E1 だけが使い、
@@ -147,6 +148,10 @@ def build_features(train, test, finance_ratios=False, survey_step=False,
         adders.append(add_readiness_features)
     if h2_restore:
         adders.append(h2_financial_health)
+    if h7_restore:
+        adders.append(h7_cash_slack)
+    if h57_subscales:
+        adders.append(add_h57_subscales)
     for add in adders:
         X, Xte = add(train, X), add(test, Xte)
     if llm_makebuy:
@@ -269,7 +274,9 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
                          llm_e0_core4_pruned_e0_only_h2_h21=False,
                          llm_e0_core4_pruned_e0_only_h2_both4=False,
                          e0_restore_missing_flags=False,
-                         h21_anchor_both=False, h49_e0b_only=False):
+                         h21_anchor_both=False, h49_e0b_only=False,
+                         e1_h54_prune=False, h2h7_both4=False,
+                         h2_stable_leverage=False):
     """各エキスパートの OOF と test 予測を返す。重いのでnpzにキャッシュする。
 
     キャッシュ名に構成タグを含める。専用列のあり/なしで中身が変わるので、
@@ -292,7 +299,10 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
            + ("_llmcore4e0onlyh2both4" if llm_e0_core4_pruned_e0_only_h2_both4 else "")
            + ("_e0missing" if e0_restore_missing_flags else "")
            + ("_h21both" if h21_anchor_both else "")
-           + ("_h49e0b" if h49_e0b_only else ""))
+           + ("_h49e0b" if h49_e0b_only else "")
+           + ("_h54prune" if e1_h54_prune else "")
+           + ("_h2h7both4" if h2h7_both4 else "")
+           + ("_h2stablelev" if h2_stable_leverage else ""))
     path = os.path.join(OUT_DIR, f"_experts_seed{seed}{tag}.npz")
     if cache and os.path.exists(path):
         d = np.load(path)
@@ -309,13 +319,16 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
                                             llm_e0_core4_pruned_e0_only or
                                             llm_e0_core4_pruned_e0_only_h2 or
                                             llm_e0_core4_pruned_e0_only_h2_h21 or
-                                            llm_e0_core4_pruned_e0_only_h2_both4),
+                                            llm_e0_core4_pruned_e0_only_h2_both4 or
+                                            h2h7_both4 or h2_stable_leverage),
                                h2_restore=(llm_e0_core4_pruned_e0_only_h2 or
                                            llm_e0_core4_pruned_e0_only_h2_h21 or
-                                           llm_e0_core4_pruned_e0_only_h2_both4),
+                                           llm_e0_core4_pruned_e0_only_h2_both4 or
+                                           h2h7_both4 or h2_stable_leverage),
                                h21_restore=(llm_e0_core4_pruned_e0_only_h2_h21 or
                                             h21_anchor_both),
-                               h49_restore=h49_e0b_only)
+                               h49_restore=h49_e0b_only,
+                               h7_restore=h2h7_both4)
     txt, txt_te = (train[TEXT_COL].fillna("").astype(str).values,
                    test[TEXT_COL].fillna("").astype(str).values)
     org, org_te = load_org_text(train), load_org_text(test)  # E0 が使う（常にTF-IDF）
@@ -333,7 +346,8 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
     if (llm_e0_core4_pruned or llm_e0_core4_pruned_e0_only or
             llm_e0_core4_pruned_e0_only_h2 or
             llm_e0_core4_pruned_e0_only_h2_h21 or
-            llm_e0_core4_pruned_e0_only_h2_both4):
+            llm_e0_core4_pruned_e0_only_h2_both4 or h2h7_both4 or
+            h2_stable_leverage):
         missing = set(FINANCE_ISNA_COLS + SURVEY_ISNA_COLS)
         core4 = {
             "LLM_need_score", "LLM_make_limitation_score",
@@ -352,8 +366,9 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
         c0 = [c for c in c0 if c not in READINESS_COLS]
     e0_only = (llm_e0_core4_pruned_e0_only or llm_e0_core4_pruned_e0_only_h2 or
                llm_e0_core4_pruned_e0_only_h2_h21 or
-               llm_e0_core4_pruned_e0_only_h2_both4)
-    if llm_e0_core4_pruned_e0_only_h2_both4:
+               llm_e0_core4_pruned_e0_only_h2_both4 or h2h7_both4 or
+               h2_stable_leverage)
+    if llm_e0_core4_pruned_e0_only_h2_both4 or h2h7_both4 or h2_stable_leverage:
         c0b = [c for c in c0_all if not c.startswith("LLM_")]
     else:
         c0b = ([c for c in c0_all
@@ -362,10 +377,21 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
                if e0_only else c0)
     if h21_anchor_both:
         c0b += ["ソフト投資比率_売上", "流動比率"]
+    if h2h7_both4:
+        drop = {"負債比率", "ROE", "営業CFマージン"}
+        add = ["FCF比率", "現金ROA"]
+        c0 = [c for c in c0 if c not in drop] + [c for c in add if c not in c0]
+        c0b = [c for c in c0b if c not in drop] + [c for c in add if c not in c0b]
+    if h2_stable_leverage:
+        # E0(木)は現状維持、E0b(線形)だけ負債比率(不安定, std=588)を
+        # 負債資産比率(std=0.22)へ差替。5rep検証でE0bのみACCEPT(明確)、
+        # E0へ適用するとむしろ悪化したための非対称ルーティング。
+        c0b = [c for c in c0b if c != "負債比率"] + ["負債資産比率"]
     if h49_e0b_only:
         c0b = [c for c in c0b if c not in READINESS_COLS]
         c0b += ["展開段階_移行幅", "展開段階_scale_window"]
-    c1, c2, c6 = (e1_finance_cols(with_ratios=finance_ratios),
+    c1, c2, c6 = (e1_finance_cols(with_ratios=finance_ratios,
+                                  h54_prune=e1_h54_prune),
                   e2_survey_cols(with_step=survey_step),
                   e6_manual_cols(X.columns))
     c7 = e7_cross_cols() if cross else None
@@ -517,7 +543,8 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
         llm_e0_core4_pruned_e0_only_h2_h21=False,
         llm_e0_core4_pruned_e0_only_h2_both4=False,
         e0_restore_missing_flags=False, h21_anchor_both=False,
-        h49_e0b_only=False, output=None):
+        h49_e0b_only=False, e1_h54_prune=False, h2h7_both4=False,
+        h2_stable_leverage=False, output=None):
     default = expert_names(cross, linear, h30_absdiff, gam, embed_knn)
     experts = default if experts is None else experts
     y, oof, te = compute_expert_preds(seed, cache=not no_cache,
@@ -539,7 +566,10 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
                                       llm_e0_core4_pruned_e0_only_h2_both4=llm_e0_core4_pruned_e0_only_h2_both4,
                                       e0_restore_missing_flags=e0_restore_missing_flags,
                                       h21_anchor_both=h21_anchor_both,
-                                      h49_e0b_only=h49_e0b_only)
+                                      h49_e0b_only=h49_e0b_only,
+                                      e1_h54_prune=e1_h54_prune,
+                                      h2h7_both4=h2h7_both4,
+                                      h2_stable_leverage=h2_stable_leverage)
     if target != "zero":
         print(f"メタ重みの縮小先: {target}")
     if finance_ratios:
@@ -579,6 +609,12 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
         print("H21（ソフト投資/売上・流動比率）をE0とE0bの両方へ追加")
     if h49_e0b_only:
         print("H49展開段階2列をE0bだけへ追加")
+    if e1_h54_prune:
+        print("E1のH54 target-free会計恒等式重複5本を削除(19->14列)")
+    if h2h7_both4:
+        print("H2財務4本の負債比率/ROEをFCF比率/現金ROAへ差替(H2+H7)")
+    if h2_stable_leverage:
+        print("E0bだけ負債比率を負債資産比率へ差替(E0は現状維持)")
     if concat_embed:
         print(f"E4 を [{' ; '.join(CONCAT_SLUGS)}] 連結 embedding+LR に差し替えた構成 "
               f"(ブロックごと dim={CONCAT_EMB_DIM}, C={CONCAT_EMB_C})")
@@ -642,7 +678,10 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
                  + ("_llmcore4e0onlyh2both4" if llm_e0_core4_pruned_e0_only_h2_both4 else "")
                  + ("_e0missing" if e0_restore_missing_flags else "")
                  + ("_h21both" if h21_anchor_both else "")
-                 + ("_h49e0b" if h49_e0b_only else ""))
+                 + ("_h49e0b" if h49_e0b_only else "")
+                 + ("_h54prune" if e1_h54_prune else "")
+                 + ("_h2h7both4" if h2h7_both4 else "")
+                 + ("_h2stablelev" if h2_stable_leverage else ""))
         t_tag = (f"_pos{test_pos}" if test_pos is not None
                  else f"_th{threshold}" if threshold is not None else "")
         out = output or (f"submission/submission_ensemble_experts_seed{seed}"
@@ -712,6 +751,12 @@ if __name__ == "__main__":
                    help="H21代表2列をE0とE0bの両方へ追加")
     p.add_argument("--h49-e0b-only", action="store_true",
                    help="H49展開段階2列をE0bだけへ追加")
+    p.add_argument("--e1-h54-prune", action="store_true",
+                   help="E1のH54 target-free会計恒等式重複5本を削除(19->14列)")
+    p.add_argument("--h2h7-both4", action="store_true",
+                   help="H2財務4本の負債比率/ROEをFCF比率/現金ROAへ差替(legacy_batch1で5/5満点だった組合せ)")
+    p.add_argument("--h2-stable-leverage", action="store_true",
+                   help="E0bだけ負債比率(不安定)を負債資産比率(安定)へ差替、E0は現状維持")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--test-pos", type=int,
                    help="testの予測正例数を指定して閾値を逆算（既定はOOF最適）")
@@ -739,4 +784,7 @@ if __name__ == "__main__":
         e0_restore_missing_flags=a.e0_restore_missing_flags,
         h21_anchor_both=a.h21_anchor_both,
         h49_e0b_only=a.h49_e0b_only,
+        e1_h54_prune=a.e1_h54_prune,
+        h2h7_both4=a.h2h7_both4,
+        h2_stable_leverage=a.h2_stable_leverage,
         output=a.output)

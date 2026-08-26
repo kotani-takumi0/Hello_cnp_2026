@@ -132,6 +132,44 @@ def add_survey_features(raw, X, groups=("shape", "step", "gap")):
     return out
 
 
+H57_SUBSCALE_COLS = (
+    "サブ_戦略成果", "サブ_内部センチメント", "サブ_実装状況", "サブ_外部連携学習",
+)
+
+
+def add_h57_subscales(raw, X):
+    """H57: アンケート11問をLLMによるtarget-free意味分類(2026-08-26)で4群へ蒸留。
+
+    分類は質問文(`data/description.csv`)の内容だけを見て一度だけ決めた。
+    値・yは一切参照していない(`documents/signate_information_quality_research.md`)。
+      A 戦略・成果:       Q1(戦略の明確さ), Q8(DX成果実感)
+      B 内部センチメント: Q2(社内DX満足度), Q4(変革抵抗感, 逆転), Q7(既存ツール満足度)
+      C 実装状況:         Q3(最新技術導入), Q5(セキュリティ整備), Q6(ツール導入有無)
+      D 外部連携・学習:   Q9(セミナー参加), Q10(外部連携実績), Q11(情報収集)
+
+    各項目は既知のスケール(1-5 または 1/2)で0-1へ線形写像してから群内平均する
+    (`S_g = mean_j x_j`)。Q4は逆転(1-値)。Q7の欠損(Q6=いいえの48%)は
+    target-freeに中央値相当の3で補完する(H27のGAP_COLSが使う購入率由来の
+    3.3ではない)。行単位の決定的変換のみでリーク無し。
+    """
+    def s15(col):
+        return (raw[col].astype(float) - 1) / 4
+
+    q1, q2, q3 = s15("アンケート１"), s15("アンケート２"), s15("アンケート３")
+    q4, q5 = s15("アンケート４"), s15("アンケート５")
+    q7 = (raw["アンケート７"].astype(float).fillna(3) - 1) / 4
+    q8, q9 = s15("アンケート８"), s15("アンケート９")
+    q10, q11 = s15("アンケート１０"), s15("アンケート１１")
+    q6 = raw["アンケート６"].map({1: 1.0, 2: 0.0}).astype(float)
+
+    out = X.copy()
+    out["サブ_戦略成果"] = pd.concat([q1, q8], axis=1).mean(axis=1)
+    out["サブ_内部センチメント"] = pd.concat([q2, 1 - q4, q7], axis=1).mean(axis=1)
+    out["サブ_実装状況"] = pd.concat([q3, q5, q6], axis=1).mean(axis=1)
+    out["サブ_外部連携学習"] = pd.concat([q9, q10, q11], axis=1).mean(axis=1)
+    return out
+
+
 def a7_median_fill(Xtr, *others):
     """a7 の 0埋め(欠損マーカー)を、**Xtr の観測中央値**に置き換えた組を返す。
 
