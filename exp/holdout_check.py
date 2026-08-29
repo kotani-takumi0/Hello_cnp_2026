@@ -68,7 +68,8 @@ from embedding_knn import (  # noqa: E402
 )
 from decision import verdict  # noqa: E402
 from meta_blend import (  # noqa: E402
-    apply_meta, fit_meta, select_alpha, to_logit, uniform_blend,
+    apply_meta, fit_meta, select_alpha, select_alpha_1se, to_logit,
+    uniform_blend,
 )
 
 
@@ -402,7 +403,8 @@ def _score_at(y, p, th):
 def one_rep(X, y, txt, org, cols, rep, alpha, test_size, rules=("oof_best",),
             target="zero", e4=None, e7_model=None, linear_c=None, h30=None,
             gam_c=None, knn=None, strict_lgbm=True,
-            linear_preprocess="raw", linear_log_extra=False):
+            linear_preprocess="raw", linear_log_extra=False,
+            alpha_rule="auto"):
     idx = np.arange(len(y))
     A, B = train_test_split(idx, test_size=test_size, stratify=y, random_state=rep)
     cross, linear = e7_model is not None, linear_c is not None
@@ -431,8 +433,12 @@ def one_rep(X, y, txt, org, cols, rep, alpha, test_size, rules=("oof_best",),
     fitted, alphas = {}, {}
     for label, members in subs.items():
         Za = _stack(oof, members)
-        a = (alpha if alpha is not None
-             else select_alpha(Za, yA, seed=rep, target=target)[0])
+        if alpha is not None:
+            a = alpha
+        elif alpha_rule == "1se":
+            a = select_alpha_1se(Za, yA, rep, target=target)
+        else:
+            a = select_alpha(Za, yA, seed=rep, target=target)[0]
         w, b = fit_meta(Za, yA, alpha=a, target=target)
         fitted[label] = (members, w, b)
         alphas[label] = a
@@ -473,7 +479,8 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
         e1_h54_prune=False, e6_add_noise_col=False, seed_offset=0,
         e2_h57_subscales=False, h2h7_both4=False, h2_stable_leverage=False,
         strict_lgbm=True, linear_preprocess="raw",
-        linear_log_extra=False, h58=False, e4_pca_dim=None):
+        linear_log_extra=False, h58=False, e4_pca_dim=None,
+        alpha_rule="auto"):
     if linear_log_extra and (not linear or linear_preprocess != "raw"):
         raise ValueError("--linear-log-extraはraw E0bとの併用時だけ指定できる")
     train, test = pd.read_csv("data/train.csv"), pd.read_csv("data/test.csv")
@@ -572,7 +579,8 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
         print(f"  rep {rep + 1}/{n_reps} (seed={seed}) ...", flush=True)
         r, w, a = one_rep(X, y, txt, org, cols, seed, alpha, test_size, rules,
                           target, e4, e7, lin, h30, gam_value, knn,
-                          strict_lgbm, linear_preprocess, linear_log_extra)
+                          strict_lgbm, linear_preprocess, linear_log_extra,
+                          alpha_rule)
         ws.append(w)
         alphas.append(a)
         for (m, rule), v in r.items():
@@ -790,6 +798,9 @@ if __name__ == "__main__":
     p.add_argument("--threshold-rules", nargs="+", default=["oof_best"],
                    choices=list(THRESHOLD_RULES),
                    help="比較する閾値則。先頭が差分の基準（既定は現行のoof_bestのみ）")
+    p.add_argument("--alpha-rule", default="auto", choices=["auto", "1se"],
+                   help="メタのalpha選択則。1se は最良から1SE以内で最小のalphaに"
+                        "留める（既定 auto は現行のargmax）")
     p.add_argument("--meta-target", default="zero", choices=["zero", "uniform"],
                    help="メタ重みの縮小先。uniform は等分ブレンドへ縮む")
     a = p.parse_args()
@@ -802,4 +813,4 @@ if __name__ == "__main__":
         a.e1_h54_prune, a.e6_add_noise_col, a.seed_offset,
         a.e2_h57_subscales, a.h2h7_both4, a.h2_stable_leverage,
         a.strict_lgbm, a.linear_preprocess, a.linear_log_extra, a.h58,
-        a.e4_pca_dim)
+        a.e4_pca_dim, a.alpha_rule)

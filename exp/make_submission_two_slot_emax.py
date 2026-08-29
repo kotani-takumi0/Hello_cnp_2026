@@ -1,11 +1,21 @@
 """Privateで高い方が採用される提出2枠を、E[max(F1)]で使い分ける。
 
-枠1は現行H2+H7-both4の ``half_f1`` 提出を固定する。枠2だけを、
-OOFでPlatt較正したtest確率から生成するposterior predictive simulationで選ぶ。
-Publicラベルは使わない。
+枠1は ``half_f1`` 閾値の提出。枠2だけを、OOFでPlatt較正したtest確率から
+生成するposterior predictive simulationで選ぶ。Publicラベルは使わない。
+
+``--alpha-rule 1se`` を渡すと、両方の枠の土台になる合成そのものを
+1-SE則のメタに差し替える（documents/meta_native_and_alpha_selection_20260829.md）。
+土台のランキングが変われば half_f1 閾値も E[max] 曲線も引き直しになるので、
+枠1・枠2を同時に作り直す。
+
+**注意**: alpha-rule をまたいだ E[max] の数値は直接比較できない。この
+シミュレーションは「その土台自身の較正済み確率」を真値として期待値を取るので、
+別の土台どうしでは真値の定義が違う。ランキングの優劣は AP/AUC のペア比較
+（11seedで ΔAP +0.0030, 9/11）で判断すること。
 
 実行例:
   .venv/bin/python exp/make_submission_two_slot_emax.py
+  .venv/bin/python exp/make_submission_two_slot_emax.py --alpha-rule 1se
 """
 from __future__ import annotations
 
@@ -40,7 +50,7 @@ DRAWS_PER_BOOTSTRAP = 100
 PLATEAU_TOL = 1e-4
 
 
-def _load_predictions():
+def _load_predictions(alpha_rule="auto"):
     names = expert_names(cross=True, linear=True)
     expected = (
         "E0_anchor", "E1_finance", "E2_survey", "E3_dx_text",
@@ -53,6 +63,7 @@ def _load_predictions():
     test = {name: cache[f"te_{name}"] for name in names}
     p_oof, p_test, _, _ = blend_oof(
         y, oof, test, seed=42, alpha=None, experts=names,
+        alpha_rule=alpha_rule,
     )
     return y, p_oof, p_test
 
@@ -117,17 +128,19 @@ def _simulate_curve(y, p_oof, p_test, main_k):
     return curve, selected_k
 
 
-def run(output: Path, curve_path: Path, overwrite: bool = False):
-    for path in (output, curve_path):
-        if path.exists() and not overwrite:
+def run(output: Path, curve_path: Path, overwrite: bool = False,
+        alpha_rule: str = "auto", main_output: Path | None = None):
+    for path in (output, curve_path, main_output):
+        if path is not None and path.exists() and not overwrite:
             raise FileExistsError(f"既存ファイルは上書きしない: {path}")
 
-    y, p_oof, p_test = _load_predictions()
+    y, p_oof, p_test = _load_predictions(alpha_rule)
     score = _scores(y, p_oof)
     main_threshold = float(score["f1"] / 2.0)
     main_label = (p_test >= main_threshold).astype(int)
     main_k = int(main_label.sum())
-    assert main_k == 207, f"本命の正例数が変わった: {main_k}"
+    if alpha_rule == "auto":
+        assert main_k == 207, f"本命の正例数が変わった: {main_k}"
 
     test = pd.read_csv(ROOT / "data/test.csv")
     sample = pd.read_csv(
@@ -135,15 +148,22 @@ def run(output: Path, curve_path: Path, overwrite: bool = False):
         header=None,
         names=["企業ID", "購入フラグ"],
     )
-    existing = pd.read_csv(
-        MAIN_SUBMISSION, header=None, names=["企業ID", "購入フラグ"],
-    )
     main_frame = pd.DataFrame({"企業ID": test["企業ID"], "pred": main_label})
     main_ordered = sample[["企業ID"]].merge(main_frame, on="企業ID", how="left")
-    assert np.array_equal(existing["企業ID"], sample["企業ID"])
-    assert np.array_equal(existing["購入フラグ"], main_ordered["pred"]), (
-        "再計算した本命が既存提出と一致しない"
-    )
+    if alpha_rule == "auto":
+        # 既定の土台では、既に提出済みの枠1と1行たりとも違わないことを確認する。
+        existing = pd.read_csv(
+            MAIN_SUBMISSION, header=None, names=["企業ID", "購入フラグ"],
+        )
+        assert np.array_equal(existing["企業ID"], sample["企業ID"])
+        assert np.array_equal(existing["購入フラグ"], main_ordered["pred"]), (
+            "再計算した本命が既存提出と一致しない"
+        )
+    if main_output is not None:
+        main_output.parent.mkdir(parents=True, exist_ok=True)
+        main_ordered.assign(pred=main_ordered["pred"].astype(int)).to_csv(
+            main_output, index=False, header=False, lineterminator="\n",
+        )
 
     curve, selected_k = _simulate_curve(y, p_oof, p_test, main_k)
     order = np.argsort(-p_test)
@@ -166,7 +186,9 @@ def run(output: Path, curve_path: Path, overwrite: bool = False):
     removed = test.loc[(main_label == 1) & (hedge_label == 0), "企業ID"].tolist()
     added = test.loc[(main_label == 0) & (hedge_label == 1), "企業ID"].tolist()
     digest = hashlib.sha256(output.read_bytes()).hexdigest()
-    print(f"本命: half_f1 th={main_threshold:.12f}, 正例={main_k}")
+    print(f"土台: alpha-rule={alpha_rule}")
+    print(f"枠1: half_f1 th={main_threshold:.12f}, 正例={main_k}"
+          + (f" -> {main_output}" if main_output is not None else ""))
     print(
         f"E[max]ヘッジ: 正例={selected_k}, "
         f"単体期待F1={row.expected_single_f1:.6f}, "
@@ -186,5 +208,9 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--curve", type=Path, default=DEFAULT_CURVE)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--alpha-rule", default="auto", choices=["auto", "1se"])
+    parser.add_argument("--main-output", type=Path, default=None,
+                        help="枠1も書き出す場合の出力先")
     args = parser.parse_args()
-    run(args.output, args.curve, args.overwrite)
+    run(args.output, args.curve, args.overwrite, args.alpha_rule,
+        args.main_output)

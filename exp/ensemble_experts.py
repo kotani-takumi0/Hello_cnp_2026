@@ -62,7 +62,8 @@ from expert_groups import (  # noqa: E402
     e7_cross_cols, route_h2_anchor_cols,
 )
 from meta_blend import (  # noqa: E402
-    apply_meta, fit_meta, select_alpha, to_logit, uniform_blend,
+    apply_meta, fit_meta, select_alpha, select_alpha_1se, to_logit,
+    uniform_blend,
 )
 from gam_model import GAM_C, fit_gam  # noqa: E402
 from embedding_knn import (  # noqa: E402
@@ -530,11 +531,18 @@ def _scores(y, p):
                 f1=f1s[b], th=THS[b])
 
 
-def blend_oof(y, oof, te, seed, alpha=None, experts=EXPERTS, target="zero"):
+def blend_oof(y, oof, te, seed, alpha=None, experts=EXPERTS, target="zero",
+              alpha_rule="auto"):
     """メタ学習器を外側fold内でfitして、合成OOFとtest確率を返す。
 
     alpha=None なら **外側trainの中だけで** alpha を選ぶ。foldごとに選び直すので、
     評価対象の外側validはalpha選択にも重み推定にも一切寄与しない。
+
+    alpha_rule="1se" にすると、選ぶ範囲は同じだが「最良から1標準誤差以内で
+    最小の alpha」に留める。内側AP曲線は 0.001〜0.03 でほぼ平ら（本番構成
+    11seed×5foldで幅0.0015）なので、argmax はノイズを拾っており、たまたま
+    大きい alpha を引くと直交している E2 の重みが潰れる。
+    詳細は documents/meta_native_and_alpha_selection_20260829.md。
 
     experts で構成員を絞れる。キャッシュには常に全エキスパートの予測が入っているので、
     部分集合の評価に再計算は要らない。
@@ -545,8 +553,12 @@ def blend_oof(y, oof, te, seed, alpha=None, experts=EXPERTS, target="zero"):
     weights, te_parts, alphas = [], [], []
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
     for tr, va in skf.split(Z, y):
-        a = (alpha if alpha is not None
-             else select_alpha(Z[tr], y[tr], seed=seed, target=target)[0])
+        if alpha is not None:
+            a = alpha
+        elif alpha_rule == "1se":
+            a = select_alpha_1se(Z[tr], y[tr], seed, target=target)
+        else:
+            a = select_alpha(Z[tr], y[tr], seed=seed, target=target)[0]
         alphas.append(a)
         w, b = fit_meta(Z[tr], y[tr], alpha=a, target=target)
         out[va] = apply_meta(Z[va], w, b)
@@ -589,7 +601,7 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
         h49_e0b_only=False, e1_h54_prune=False, h2h7_both4=False,
         h2_stable_leverage=False, output=None,
         linear_preprocess="raw", linear_log_extra=False, h58=False,
-        e4_pca_dim=None):
+        e4_pca_dim=None, alpha_rule="auto"):
     default = expert_names(cross, linear, h30_absdiff, gam, embed_knn,
                            linear_log_extra)
     experts = default if experts is None else experts
@@ -681,8 +693,10 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
     Z = to_logit(np.column_stack([oof[n] for n in experts]))
     rows["-- uniform blend"] = _scores(y, uniform_blend(Z))
     blend, blend_te, w, alphas = blend_oof(y, oof, te, seed, alpha,
-                                           experts=experts, target=target)
-    key = "-- meta (alpha=auto)" if alpha is None else f"-- meta (alpha={alpha})"
+                                           experts=experts, target=target,
+                                           alpha_rule=alpha_rule)
+    key = (f"-- meta (alpha={alpha_rule})" if alpha is None
+           else f"-- meta (alpha={alpha})")
     rows[key] = _scores(y, blend)
 
     table = pd.DataFrame(rows).T
@@ -710,7 +724,7 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
         pred = pd.DataFrame({"企業ID": test["企業ID"].values, "pred": label})
         sub = sample[["企業ID"]].merge(pred, on="企業ID", how="left")
         assert sub["pred"].notna().all(), "予測欠損あり"
-        tag = "auto" if alpha is None else str(alpha)
+        tag = alpha_rule if alpha is None else str(alpha)
         n_tag = "" if tuple(experts) == default else f"_{len(experts)}experts"
         r_tag = (("_ratio" if finance_ratios else "")
                  + ("_step" if survey_step else "")
@@ -830,6 +844,9 @@ if __name__ == "__main__":
     g.add_argument("--test-pos", type=int,
                    help="testの予測正例数を指定して閾値を逆算（既定はOOF最適）")
     g.add_argument("--threshold", type=float, help="閾値を直接指定")
+    p.add_argument("--alpha-rule", default="auto", choices=["auto", "1se"],
+                   help="メタのalpha選択則。1se は最良から1SE以内で最小のalphaに"
+                        "留める（既定 auto は現行のargmax）")
     p.add_argument("--meta-target", default="zero", choices=["zero", "uniform"],
                    help="メタ重みの縮小先。uniform は等分ブレンドへ縮む")
     a = p.parse_args()
@@ -858,4 +875,4 @@ if __name__ == "__main__":
         h2h7_both4=a.h2h7_both4,
         h2_stable_leverage=a.h2_stable_leverage,
         output=a.output, linear_preprocess=a.linear_preprocess,
-        linear_log_extra=a.linear_log_extra)
+        linear_log_extra=a.linear_log_extra, alpha_rule=a.alpha_rule)

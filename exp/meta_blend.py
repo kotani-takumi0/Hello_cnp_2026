@@ -108,3 +108,33 @@ def select_alpha(Z, y, grid=None, n_splits=5, seed=0, target="zero"):
         if ap > best_ap:
             best, best_ap = a, ap
     return best, best_ap
+
+
+def select_alpha_1se(Z, y, seed, grid=None, n_splits=5, target="zero"):
+    """内側APの最良から1標準誤差以内で、**最小の** alpha を返す。
+
+    `select_alpha` は fold を跨いでプールした AP の argmax を取る。この曲線は
+    0.001〜0.03 の間でほぼ平ら（6seed×5foldの実測で幅0.0015）なので、argmax は
+    実質ノイズを拾っている。たまたま大きい alpha を引くと上の docstring が言う
+    通りに重みが潰れ、直交している E2 が真っ先に削られる。
+
+    1-SE 則なら「はっきり優位でない限り小さい側に留まる」。曲線が平らな限り
+    grid 下端に落ちるので、過去に観測された「常に下端」という挙動と一致する。
+    """
+    grid = grid or (ALPHA_GRID if target == "zero" else UNIFORM_ALPHA_GRID)
+    folds = list(StratifiedKFold(n_splits, shuffle=True,
+                                 random_state=seed).split(Z, y))
+    mean_ap, se_ap = {}, {}
+    for a in grid:
+        per_fold = []
+        for tr, va in folds:
+            if len(np.unique(y[va])) < 2:
+                continue
+            w, b = fit_meta(Z[tr], y[tr], alpha=a, target=target)
+            per_fold.append(average_precision_score(
+                y[va], apply_meta(Z[va], w, b)))
+        mean_ap[a] = float(np.mean(per_fold))
+        se_ap[a] = float(np.std(per_fold, ddof=1) / np.sqrt(len(per_fold)))
+    best = max(mean_ap, key=mean_ap.get)
+    floor = mean_ap[best] - se_ap[best]
+    return min(a for a in grid if mean_ap[a] >= floor)
