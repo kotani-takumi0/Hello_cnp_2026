@@ -16,14 +16,15 @@
     いる。詳細は finance_ratio_features.py の docstring。
 """
 from cross_features import ALL_CROSS_COLS
-from finance_ratio_features import FINANCE_RATIO_COLS
+from finance_ratio_features import FINANCE_RATIO_COLS, H58_RATIO_COLS
 from survey_features import ALL_DERIVED_COLS, H57_SUBSCALE_COLS, STEP_COLS
 
 # E0(アンカー94列)に混ぜてはいけない、特定エキスパート専用の派生列。
 # 負債資産比率はh2_financial_health()が常に計算するが、既定のH2-both4
 # 再現性を壊さないよう既定では除外し、--h2-stable-leverage指定時だけ
 # 明示的に追加する(holdout_check.py参照)。
-EXPERT_ONLY_COLS = (tuple(FINANCE_RATIO_COLS) + tuple(ALL_DERIVED_COLS)
+EXPERT_ONLY_COLS = (tuple(FINANCE_RATIO_COLS) + tuple(H58_RATIO_COLS)
+                    + tuple(ALL_DERIVED_COLS)
                     + tuple(ALL_CROSS_COLS) + tuple(H57_SUBSCALE_COLS)
                     + ("負債資産比率",))
 
@@ -114,7 +115,8 @@ def route_h2_anchor_cols(c0, c0b, mode):
 H54_FINANCE_DROP_COLS = ("流動資産", "固定資産", "純資産", "経常利益", "営業CF")
 
 
-def e1_finance_cols(with_ratios=False, with_h2=False, h54_prune=False):
+def e1_finance_cols(with_ratios=False, with_h2=False, h54_prune=False,
+                    with_h58=False):
     """E1 財務・規模: 連続量と比率。欠損が多いので木向き。
 
     with_ratios=True で H21 の財務比4本を足す。既定を False にしてあるのは、
@@ -133,6 +135,8 @@ def e1_finance_cols(with_ratios=False, with_h2=False, h54_prune=False):
         cols = [c for c in cols if c not in H54_FINANCE_DROP_COLS]
     if with_ratios:
         cols = cols + list(FINANCE_RATIO_COLS)
+    if with_h58:
+        cols = cols + list(H58_RATIO_COLS)
     if with_h2:
         cols = cols + list(H2_FINANCE_HEALTH_COLS)
     return cols

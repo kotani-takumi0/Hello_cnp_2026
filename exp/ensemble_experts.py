@@ -57,8 +57,9 @@ from embedding_features import (  # noqa: E402
     load_absdiff_embeddings, load_concat_embeddings, load_embeddings,
 )
 from expert_groups import (  # noqa: E402
-    FINANCE_ISNA_COLS, SURVEY_ISNA_COLS, e0_anchor_cols, e1_finance_cols,
-    e2_survey_cols, e6_manual_cols, e7_cross_cols, route_h2_anchor_cols,
+    FINANCE_COLS, FINANCE_ISNA_COLS, SCALE_COLS, SURVEY_ISNA_COLS,
+    e0_anchor_cols, e1_finance_cols, e2_survey_cols, e6_manual_cols,
+    e7_cross_cols, route_h2_anchor_cols,
 )
 from meta_blend import (  # noqa: E402
     apply_meta, fit_meta, select_alpha, to_logit, uniform_blend,
@@ -88,23 +89,27 @@ EXPERTS = ("E0_anchor", "E1_finance", "E2_survey", "E3_dx_text",
            "E4_org_text", "E6_manual")
 E7_NAME = "E7_cross"
 E0B_NAME = "E0b_linear"
+E0B_LOG_NAME = "E0b_signed_log"
 E8_NAME = "E8_text_absdiff"
 GAM_NAME = "E0c_gam"
 E9_NAME = "E9_embed_knn"
 
 
 def expert_names(cross=False, linear=False, h30_absdiff=False, gam=False,
-                 embed_knn=False):
+                 embed_knn=False, linear_log_extra=False):
     """構成員の名前。既存6本は常に不変で、後ろに足していく。
 
     cross=True  … H27 E7（不満×財務の交互作用12列）
     linear=True … H28 E0b（E0と同じ94列に one-hot + LR）
+    linear_log_extra=True … raw E0bに符号付き対数版E0bを追加
     """
     names = EXPERTS
     if cross:
         names += (E7_NAME,)
     if linear:
         names += (E0B_NAME,)
+    if linear_log_extra:
+        names += (E0B_LOG_NAME,)
     if h30_absdiff:
         names += (E8_NAME,)
     if gam:
@@ -117,7 +122,7 @@ def expert_names(cross=False, linear=False, h30_absdiff=False, gam=False,
 def build_features(train, test, finance_ratios=False, survey_step=False,
                    cross=False, h37_priority=False, llm_makebuy=False,
                    h2_restore=False, h21_restore=False, h49_restore=False,
-                   h57_subscales=False, h7_restore=False):
+                   h57_subscales=False, h7_restore=False, h58=False):
     """train/test に行単位の決定的特徴を積む。fold内スコアはここでは足さない。
 
     finance_ratios=True のとき H21 の財務比4本も積む。この列は E1 だけが使い、
@@ -138,7 +143,7 @@ def build_features(train, test, finance_ratios=False, survey_step=False,
     if h37_priority:
         adders.append(add_dx_outlook_priority_features)
     if finance_ratios or h21_restore:
-        adders.append(add_finance_ratios)
+        adders.append(lambda raw, df: add_finance_ratios(raw, df, h58=h58))
     if survey_step:
         adders.append(lambda raw, df: add_survey_features(raw, df,
                                                           groups=("step",)))
@@ -160,7 +165,7 @@ def build_features(train, test, finance_ratios=False, survey_step=False,
     return X, y, Xte[X.columns]
 
 
-def e4_inputs(train, test, org_embed, concat_embed=False):
+def e4_inputs(train, test, org_embed, concat_embed=False, e4_pca_dim=None):
     """E4(組織図エキスパート)の入力とモデル生成関数を返す。
 
     org_embed=True で TF-IDF+LR → OpenAI embedding+LR に **差し替える**（追加ではない）。
@@ -178,7 +183,8 @@ def e4_inputs(train, test, org_embed, concat_embed=False):
     ホールドアウト検証で rep 単位の厳密なペアが取れる（`--survey-step` と同じ設計）。
     """
     if concat_embed:
-        tr, te = load_concat_embeddings(CONCAT_SLUGS, dim=CONCAT_EMB_DIM)
+        tr, te = load_concat_embeddings(CONCAT_SLUGS, dim=CONCAT_EMB_DIM,
+                                        pca_dim=e4_pca_dim)
         params = {**EMB_LR_PARAMS, "C": CONCAT_EMB_C}
         return tr, te, lambda: build_embed_model(params)
     if org_embed:
@@ -234,7 +240,26 @@ def _onehot_align(*frames):
     return [o.reindex(columns=cols, fill_value=0).astype(float) for o in outs]
 
 
-def fit_e0b(A_tr, ytr, A_va, A_te, C=LINEAR_C):
+E0B_NUMERIC_TRANSFORMS = ("raw", "signed_log")
+E0B_SIGNED_LOG_COLS = FINANCE_COLS + SCALE_COLS
+
+
+def _transform_e0b_numeric(frame, numeric_transform):
+    """E0bの対象連続列へtarget-freeな決定的変換を適用する。"""
+    if numeric_transform not in E0B_NUMERIC_TRANSFORMS:
+        raise ValueError(f"未知のE0b数値前処理: {numeric_transform}")
+    if numeric_transform == "raw":
+        return frame
+    out = frame.copy()
+    for c in E0B_SIGNED_LOG_COLS:
+        if c in out.columns:
+            v = out[c].astype(float)
+            out[c] = np.sign(v) * np.log1p(np.abs(v))
+    return out
+
+
+def fit_e0b(A_tr, ytr, A_va, A_te, C=LINEAR_C,
+            numeric_transform="raw"):
     """E0b(H28): E0 と同じ94列に one-hot + 標準化 + LR。
 
     **列は減らさない**。田中さん nb018 は「線形向き54列に絞る」を試して 0/10 で負けており、
@@ -244,8 +269,13 @@ def fit_e0b(A_tr, ytr, A_va, A_te, C=LINEAR_C):
     欠損は **A_tr の中央値**で埋める（`資本金`/`営業利益`/`経常利益` は NaN のまま
     渡ってくる）。`_isna` フラグが別列にあるので、埋める定数自体はフラグの係数に
     吸収される＝値の選択は本質ではなく、標準化のスケールを壊さないための処置。
+
+    numeric_transform="signed_log"はH61実験用。財務金額・規模23列だけに
+    sign(x)*log1p(abs(x))を適用する。既定rawは過去予測と完全一致する。
     """
     Btr, Bva, Bte = _onehot_align(A_tr, A_va, A_te)
+    Btr, Bva, Bte = [_transform_e0b_numeric(d, numeric_transform)
+                      for d in (Btr, Bva, Bte)]
     med = Btr.median()
     f = lambda d: d.fillna(med).fillna(0.0)  # noqa: E731
     model = make_pipeline(StandardScaler(),
@@ -276,17 +306,26 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
                          e0_restore_missing_flags=False,
                          h21_anchor_both=False, h49_e0b_only=False,
                          e1_h54_prune=False, h2h7_both4=False,
-                         h2_stable_leverage=False):
+                         h2_stable_leverage=False,
+                         linear_preprocess="raw",
+                         linear_log_extra=False, h58=False,
+                         e4_pca_dim=None):
     """各エキスパートの OOF と test 予測を返す。重いのでnpzにキャッシュする。
 
     キャッシュ名に構成タグを含める。専用列のあり/なしで中身が変わるので、
     タグを分けないと片方の結果をもう片方に使い回してしまう。
     """
-    names = expert_names(cross, linear, h30_absdiff, gam, embed_knn)
+    if linear_log_extra and (not linear or linear_preprocess != "raw"):
+        raise ValueError("linear_log_extraはraw E0bとの併用時だけ指定できる")
+    names = expert_names(cross, linear, h30_absdiff, gam, embed_knn,
+                         linear_log_extra)
     tag = (("_ratio" if finance_ratios else "") + ("_step" if survey_step else "")
            + ("_concatemb" if concat_embed else "_orgemb" if org_embed else "")
            + (("_cross" + ("lr" if e7_model == "lr" else "")) if cross else "")
            + (f"_lin{linear_c:g}" if linear else "")
+           + (f"_linprep-{linear_preprocess}" if linear and
+              linear_preprocess != "raw" else "")
+           + ("_linlogextra" if linear_log_extra else "")
            + ("_h30abs" if h30_absdiff else "")
            + (f"_gam{gam_c:g}" if gam else "")
            + ("_h32knn" if embed_knn else "")
@@ -302,7 +341,9 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
            + ("_h49e0b" if h49_e0b_only else "")
            + ("_h54prune" if e1_h54_prune else "")
            + ("_h2h7both4v2eq" if h2h7_both4 else "")
-           + ("_h2stablelevv2eq" if h2_stable_leverage else ""))
+           + ("_h2stablelevv2eq" if h2_stable_leverage else "")
+           + ("_h58" if h58 else "")
+           + (f"_e4pca{e4_pca_dim}" if e4_pca_dim else ""))
     path = os.path.join(OUT_DIR, f"_experts_seed{seed}{tag}.npz")
     if cache and os.path.exists(path):
         d = np.load(path)
@@ -313,7 +354,7 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
     train, test = pd.read_csv("data/train.csv"), pd.read_csv("data/test.csv")
     X, y, Xte = build_features(train, test, finance_ratios=finance_ratios,
                                survey_step=survey_step, cross=cross,
-                               h37_priority=h37_priority,
+                               h37_priority=h37_priority, h58=h58,
                                llm_makebuy=(llm_e0_replace_dx_manual or
                                             llm_e0_core4_pruned or
                                             llm_e0_core4_pruned_e0_only or
@@ -332,7 +373,8 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
     txt, txt_te = (train[TEXT_COL].fillna("").astype(str).values,
                    test[TEXT_COL].fillna("").astype(str).values)
     org, org_te = load_org_text(train), load_org_text(test)  # E0 が使う（常にTF-IDF）
-    e4, e4_te, e4_model = e4_inputs(train, test, org_embed, concat_embed)
+    e4, e4_te, e4_model = e4_inputs(train, test, org_embed, concat_embed,
+                                    e4_pca_dim=e4_pca_dim)
     h30 = h30_inputs(h30_absdiff)
     if h30 is not None:
         h30_in, h30_te, h30_model = h30
@@ -386,7 +428,7 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
         c0b = [c for c in c0b if c not in READINESS_COLS]
         c0b += ["展開段階_移行幅", "展開段階_scale_window"]
     c1, c2, c6 = (e1_finance_cols(with_ratios=finance_ratios,
-                                  h54_prune=e1_h54_prune),
+                                  h54_prune=e1_h54_prune, with_h58=h58),
                   e2_survey_cols(with_step=survey_step),
                   e6_manual_cols(X.columns))
     c7 = e7_cross_cols() if cross else None
@@ -437,9 +479,15 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
                 for col, v in ((DX_SCORE_COL, (t_tr, t_va, t_te)),
                                (ORG_SCORE_COL, (o_tr, o_va, o_te))):
                     B_tr[col], B_va[col], B_te[col] = v
-            p, q = fit_e0b(B_tr, y[tr], B_va, B_te, linear_c)
+            p, q = fit_e0b(B_tr, y[tr], B_va, B_te, linear_c,
+                           linear_preprocess)
             oof[E0B_NAME][va] = p
             te[E0B_NAME].append(q)
+            if linear_log_extra:
+                p, q = fit_e0b(B_tr, y[tr], B_va, B_te, linear_c,
+                               "signed_log")
+                oof[E0B_LOG_NAME][va] = p
+                te[E0B_LOG_NAME].append(q)
 
         if gam:
             p, q = fit_gam(A_tr, y[tr], A_va, A_te, C=gam_c)
@@ -539,8 +587,11 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
         llm_e0_core4_pruned_e0_only_h2_both4=False,
         e0_restore_missing_flags=False, h21_anchor_both=False,
         h49_e0b_only=False, e1_h54_prune=False, h2h7_both4=False,
-        h2_stable_leverage=False, output=None):
-    default = expert_names(cross, linear, h30_absdiff, gam, embed_knn)
+        h2_stable_leverage=False, output=None,
+        linear_preprocess="raw", linear_log_extra=False, h58=False,
+        e4_pca_dim=None):
+    default = expert_names(cross, linear, h30_absdiff, gam, embed_knn,
+                           linear_log_extra)
     experts = default if experts is None else experts
     y, oof, te = compute_expert_preds(seed, cache=not no_cache,
                                       finance_ratios=finance_ratios,
@@ -564,17 +615,24 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
                                       h49_e0b_only=h49_e0b_only,
                                       e1_h54_prune=e1_h54_prune,
                                       h2h7_both4=h2h7_both4,
-                                      h2_stable_leverage=h2_stable_leverage)
+                                      h2_stable_leverage=h2_stable_leverage,
+                                      linear_preprocess=linear_preprocess,
+                                      linear_log_extra=linear_log_extra,
+                                      h58=h58, e4_pca_dim=e4_pca_dim)
     if target != "zero":
         print(f"メタ重みの縮小先: {target}")
     if finance_ratios:
-        print("E1に H21 財務比4本を追加した構成")
+        print(f"E1に H21 財務比{5 if h58 else 4}本"
+              f"{'(H58込み)' if h58 else ''}を追加した構成")
     if survey_step:
         print("E2に H22 閾値指標4本を追加した構成")
     if cross:
         print(f"E7(不満×財務 交互作用12列 / H27, model={e7_model})を7本目に追加した構成")
     if linear:
-        print(f"E0b(E0と同じ94列に one-hot+LR / H28, C={linear_c:g})を追加した構成")
+        print(f"E0b(E0と同じ94列に one-hot+LR / H28, C={linear_c:g}, "
+              f"数値前処理={linear_preprocess})を追加した構成")
+    if linear_log_extra:
+        print("raw E0bを維持し、符号付き対数E0bを追加した二重線形構成")
     if h30_absdiff:
         print(f"E8(H30 3文書間絶対差embedding, dim={H30_ABSDIFF_DIM}, "
               f"C={H30_ABSDIFF_C:g})を追加した構成")
@@ -661,6 +719,9 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
                  + (("_cross" + ("lr" if e7_model == "lr" else ""))
                     if cross else "")
                  + (f"_lin{linear_c:g}" if linear else "")
+                 + (f"_linprep-{linear_preprocess}" if linear and
+                    linear_preprocess != "raw" else "")
+                 + ("_linlogextra" if linear_log_extra else "")
                  + ("_h30abs" if h30_absdiff else "")
                  + (f"_gam{gam_c:g}" if gam else "")
                  + ("_h32knn" if embed_knn else "")
@@ -676,7 +737,9 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
                  + ("_h49e0b" if h49_e0b_only else "")
                  + ("_h54prune" if e1_h54_prune else "")
                  + ("_h2h7both4v2eq" if h2h7_both4 else "")
-                 + ("_h2stablelevv2eq" if h2_stable_leverage else ""))
+                 + ("_h2stablelevv2eq" if h2_stable_leverage else "")
+                 + ("_h58" if h58 else "")
+                 + (f"_e4pca{e4_pca_dim}" if e4_pca_dim else ""))
         t_tag = (f"_pos{test_pos}" if test_pos is not None
                  else f"_th{threshold}" if threshold is not None else "")
         out = output or (f"submission/submission_ensemble_experts_seed{seed}"
@@ -698,11 +761,17 @@ if __name__ == "__main__":
                    help="提出CSVの保存先。既存ファイルは上書きしない")
     p.add_argument("--no-cache", action="store_true")
     p.add_argument("--drop", nargs="*", default=[],
-                   choices=list(EXPERTS) + [E7_NAME, E0B_NAME, E8_NAME, GAM_NAME,
-                                            E9_NAME],
+                   choices=list(EXPERTS) + [E7_NAME, E0B_NAME, E0B_LOG_NAME,
+                                            E8_NAME, GAM_NAME, E9_NAME],
                    help="構成員から外すエキスパート（キャッシュは全員分あるので再計算不要）")
     p.add_argument("--finance-ratios", action="store_true",
                    help="E1 に H21 財務比4本を足す（E0は現行94列のまま）")
+    p.add_argument("--e4-pca-dim", type=int, default=None,
+                   help="E4の連結埋め込みを全3072次元からPCAでこの次元へ畳む"
+                        "（--concat-embed と併用。既定Noneで従来のMRL切り詰め）")
+    p.add_argument("--h58", action="store_true",
+                   help="H58(無形投資_減価償却比)を財務比の5本目として足す"
+                        "（--finance-ratios と併用。単独指定は無効）")
     p.add_argument("--survey-step", action="store_true",
                    help="E2 に H22 閾値指標4本を足す（E0は現行94列のまま）")
     p.add_argument("--org-embed", action="store_true",
@@ -718,6 +787,11 @@ if __name__ == "__main__":
                    help="H28 の E0b(E0と同じ94列に one-hot+LR)を足す（既存は不変）")
     p.add_argument("--linear-c", type=float, default=LINEAR_C,
                    help="E0b の LR の C（既定 0.1 ＝ 田中さん nb018 の設定）")
+    p.add_argument("--linear-preprocess", choices=E0B_NUMERIC_TRANSFORMS,
+                   default="raw",
+                   help="E0bの金額・規模列の前処理。signed_logは符号付きlog1p")
+    p.add_argument("--linear-log-extra", action="store_true",
+                   help="raw E0bを残し、符号付きlog1p版E0bを追加Expertにする")
     p.add_argument("--h30-absdiff", action="store_true",
                    help="H30の3文書間絶対差embeddingを独立エキスパートとして追加")
     p.add_argument("--gam", action="store_true",
@@ -761,9 +835,10 @@ if __name__ == "__main__":
     a = p.parse_args()
     run(a.seed, a.alpha, a.submit, a.no_cache,
         experts=tuple(n for n in expert_names(a.cross, a.linear, a.h30_absdiff,
-                                              a.gam, a.embed_knn)
+                                              a.gam, a.embed_knn,
+                                              a.linear_log_extra)
                       if n not in a.drop),
-        finance_ratios=a.finance_ratios,
+        finance_ratios=a.finance_ratios, h58=a.h58, e4_pca_dim=a.e4_pca_dim,
         test_pos=a.test_pos, threshold=a.threshold, target=a.meta_target,
         survey_step=a.survey_step, org_embed=a.org_embed,
         concat_embed=a.concat_embed, cross=a.cross, e7_model=a.e7_model,
@@ -782,4 +857,5 @@ if __name__ == "__main__":
         e1_h54_prune=a.e1_h54_prune,
         h2h7_both4=a.h2h7_both4,
         h2_stable_leverage=a.h2_stable_leverage,
-        output=a.output)
+        output=a.output, linear_preprocess=a.linear_preprocess,
+        linear_log_extra=a.linear_log_extra)

@@ -28,6 +28,7 @@ import os
 
 import numpy as np
 import pandas as pd
+from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 
@@ -152,7 +153,16 @@ def load_by_col(col, dim=EMB_DIM, model=DEFAULT_MODEL):
     return load_embeddings(SLUG_BY_COL[col], dim=dim, model=model)
 
 
-def load_concat_embeddings(slugs=CONCAT_SLUGS, dim=EMB_DIM, model=DEFAULT_MODEL):
+# E4 の連結埋め込みをPCAで畳む設定（2026-08-29）。
+# MRL切り詰めは「先頭k次元」で情報量順ではないため、削ると単調に悪化する
+# （単体CV: dim=16→AUC 0.6497 ... 1024→0.7056, 1536→0.7074）。
+# 一方PCAなら k=20 で全3072次元に並ぶ（0.7069 vs 0.7074）。
+# PCA後の行L2再正規化は全条件で悪化するので生のスコアを渡す。
+CONCAT_PCA_FULL_DIM = 1536  # PCA前に読むブロック次元（=全3072次元を連結）
+
+
+def load_concat_embeddings(slugs=CONCAT_SLUGS, dim=EMB_DIM, model=DEFAULT_MODEL,
+                           pca_dim=None):
     """複数列の埋め込みを横に連結して (train行列, test行列) を返す。
 
     **各ブロックを先に truncate（= L2正規化）してから連結し、最後に行全体を
@@ -166,13 +176,26 @@ def load_concat_embeddings(slugs=CONCAT_SLUGS, dim=EMB_DIM, model=DEFAULT_MODEL)
         同じ C が実質 len(slugs) 倍の緩さになって単体CVの結果と比較できない。
 
     行順は data/train.csv, data/test.csv と一致する（各 npz を verify 済み）。
+
+    pca_dim を指定すると、全次元を連結・行正規化したあと train+test をまとめて
+    PCAで pca_dim 次元へ落とす（`dim` は無視される）。PCAは y を見ないので
+    target-free。transductive（test の特徴量を見る）だが、既存の行L2正規化と
+    同じ扱い。詳細は `CONCAT_PCA_FULL_DIM` のコメント。
     """
+    if pca_dim is not None:
+        dim = CONCAT_PCA_FULL_DIM
     blocks = [load_embeddings(s, dim=dim, model=model) for s in slugs]
     out = []
     for i in range(2):  # 0=train, 1=test
         m = np.hstack([b[i] for b in blocks])
         out.append(m / np.linalg.norm(m, axis=1, keepdims=True))
-    return out[0], out[1]
+    if pca_dim is None:
+        return out[0], out[1]
+    n_tr = len(out[0])
+    stacked = np.vstack(out)
+    z = PCA(n_components=pca_dim, svd_solver="full",
+            random_state=0).fit_transform(stacked)
+    return z[:n_tr], z[n_tr:]
 
 
 def load_absdiff_embeddings(dim=H30_ABSDIFF_DIM, model=DEFAULT_MODEL):

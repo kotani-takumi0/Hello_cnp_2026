@@ -36,16 +36,36 @@ FINANCE_RATIO_COLS = (
     "投資CF_売上比",
 )
 
+# H58(チームメンバーの個人exp012, 2026-08-28): ソフト投資額 / 減価償却費。
+# 投資額が減価償却を上回る = 資産の純増、という財務の一般指標。既定 False は
+# 上の4本での過去記録をコード変更なしで再現できるようにするため。
+#
+# 注意(統合前に確認したこと):
+#   `無形固定資産変動(ソフトウェア関連)` は train/test 全1542行が負値なので
+#   abs() は cross_features.py の `soft = -raw[...]` と等価な符号戻し。外すと壊れる。
+#   `減価償却費` は全1542行が正値（min 5）なので abs() は no-op、+1 はゼロ除算避け。
+#
+#   既存 `ソフト投資比率_売上` と分子が同じで、相関は train742行で
+#   Pearson -0.4953 / **Spearman -0.7359**。doc は Pearson だけを見て
+#   採用基準 |r|<0.5 を「わずかにクリア」としているが、この docstring 冒頭が
+#   却下根拠に挙げている H3(0.77〜0.85)・H7(0.993) は Spearman 表記であり、
+#   同じ尺度なら H58 は却下レンジに入る。LightGBM は分位ビンで分割するので
+#   木にとっての重複度は Spearman 側が効く。要再検証。
+H58_RATIO_COLS = (
+    "無形投資_減価償却比",
+)
+
 
 def _safe_div(a, b):
     """ゼロ除算・無限大を欠損に落とす。LightGBM は欠損を分岐で扱える。"""
     return (a / b).replace([np.inf, -np.inf], np.nan)
 
 
-def add_finance_ratios(df, X):
+def add_finance_ratios(df, X, h58=False):
     """(生の train/test, 特徴量行列) -> 比4本を足した特徴量行列。
 
     `add_h1` / `add_org_manual_features` と同じ (df, X) -> X の規約。
+    h58=True で H58(無形投資_減価償却比)を5本目として足す。
     """
     X = X.copy()
     X["ソフト投資比率_売上"] = _safe_div(
@@ -53,4 +73,19 @@ def add_finance_ratios(df, X):
     X["流動比率"] = _safe_div(df["流動資産"], df["負債"])
     X["純資産_総資産比"] = _safe_div(df["純資産"], df["総資産"])
     X["投資CF_売上比"] = _safe_div(df["投資CF"], df["売上"])
+    if h58:
+        X = add_h58_intangible_vs_depreciation(df, X)
+    return X
+
+
+def add_h58_intangible_vs_depreciation(df, X):
+    """H58: ソフト投資額 / 減価償却費。行単位の決定的変換＝リーク無し。
+
+    doc(`documents/exp012_H58_無形資産投資と減価償却費の比率.md`)の実装を写経。
+    abs() の意味と既存列との重複は `H58_RATIO_COLS` の注記を参照。
+    """
+    X = X.copy()
+    intangible = df["無形固定資産変動(ソフトウェア関連)"].abs()
+    depreciation = df["減価償却費"].abs()
+    X["無形投資_減価償却比"] = _safe_div(intangible, depreciation + 1)
     return X

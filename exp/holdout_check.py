@@ -37,6 +37,8 @@ import sys
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
+from scipy.special import expit, logit
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold, train_test_split
 import warnings
@@ -53,8 +55,8 @@ from expert_groups import (  # noqa: E402
     e2_survey_cols, e6_manual_cols, e7_cross_cols, route_h2_anchor_cols,
 )
 from ensemble_experts import (  # noqa: E402
-    DX_SCORE_COL, E0B_NAME, E7_NAME, E8_NAME, E9_NAME, EXPERTS, GAM_NAME, LINEAR_C,
-    THS, _lgbm,
+    DX_SCORE_COL, E0B_LOG_NAME, E0B_NAME, E0B_NUMERIC_TRANSFORMS, E7_NAME,
+    E8_NAME, E9_NAME, EXPERTS, GAM_NAME, LINEAR_C, THS, _lgbm,
     _survey_lr, build_features, e4_inputs, expert_names, fit_e0b, fit_e7,
     h30_inputs,
 )
@@ -95,7 +97,8 @@ def _strict_lgbm_predict(Xtr, ytr, Xtarget, seed):
 
 def fit_predict_experts(X, y, txt, org, tr, target, seed, cols, e4=None,
                         e7_model=None, linear_c=None, h30=None, gam_c=None,
-                        knn=None, strict_lgbm=True):
+                        knn=None, strict_lgbm=True,
+                        linear_preprocess="raw", linear_log_extra=False):
     """tr で全エキスパートを学習し、target 行を予測する。
 
     E0 のテキスト特徴は tr の内側CVで作る（tr 内で完結＝リーク無し）。
@@ -140,7 +143,11 @@ def fit_predict_experts(X, y, txt, org, tr, target, seed, cols, e4=None,
         B_tr, B_ta = Xtr[c0b].copy(), Xta[c0b].copy()
         B_tr[DX_SCORE_COL], B_ta[DX_SCORE_COL] = t_tr, t_ta
         B_tr[ORG_SCORE_COL], B_ta[ORG_SCORE_COL] = o_tr, o_ta
-        out[E0B_NAME], _ = fit_e0b(B_tr, y[tr], B_ta, B_ta, linear_c)
+        out[E0B_NAME], _ = fit_e0b(B_tr, y[tr], B_ta, B_ta, linear_c,
+                                  linear_preprocess)
+        if linear_log_extra:
+            out[E0B_LOG_NAME], _ = fit_e0b(
+                B_tr, y[tr], B_ta, B_ta, linear_c, "signed_log")
     if gam_c is not None:
         out[GAM_NAME], _ = fit_gam(A_tr, y[tr], A_ta, A_ta, C=gam_c)
 
@@ -160,7 +167,7 @@ def fit_predict_experts(X, y, txt, org, tr, target, seed, cols, e4=None,
 
 
 def subsets(cross=False, linear=False, h30_absdiff=False, gam=False,
-            embed_knn=False):
+            embed_knn=False, linear_log_extra=False):
     """比較する構成。基準は常に meta_6本。候補を後ろに足していく。
 
     cross/linear を両方立てると meta_7本(=+E7) と meta_8本(=+E7+E0b) が並ぶので、
@@ -175,6 +182,10 @@ def subsets(cross=False, linear=False, h30_absdiff=False, gam=False,
         s["meta_7本"] = expert_names(cross=True)
     if linear:
         s["meta_8本" if cross else "meta_7本_lin"] = expert_names(cross, True)
+    if linear_log_extra:
+        candidate = expert_names(cross, linear, h30_absdiff, gam, embed_knn,
+                                 linear_log_extra=True)
+        s[f"meta_{len(candidate)}本_log"] = candidate
     if h30_absdiff:
         n_base = len(expert_names(cross, linear))
         s[f"meta_{n_base + 1}本"] = expert_names(cross, linear, True)
@@ -203,7 +214,99 @@ def _best_th(y, p):
 
 # 閾値則。すべて A の情報だけで決める（rate のみ B のスコア分布を使うがラベルは見ない）。
 THRESHOLD_RULES = ("oof_best", "fold_mean", "fold_median", "plateau_mid",
-                   "rate", "half_f1")
+                   "rate", "half_f1", "platt_half_f1", "cbpe", "cbpe_platt",
+                   "boot_mean", "rule_mean")
+
+
+def _platt_half_f1_raw_threshold(pA, yA):
+    """AのOOFだけでPlatt校正し、calibrated F1*/2を生スコア閾値へ戻す。"""
+    x = to_logit(pA).reshape(-1, 1)
+    calibrator = LogisticRegression(C=1.0, max_iter=2000, random_state=0)
+    calibrator.fit(x, yA)
+    slope = float(calibrator.coef_[0, 0])
+    intercept = float(calibrator.intercept_[0])
+    if slope <= 0:
+        raise RuntimeError(f"Platt校正の傾きが非正: {slope}")
+    p_cal = calibrator.predict_proba(x)[:, 1]
+    best = _best_th(yA, p_cal)
+    calibrated_threshold = f1_score(yA, p_cal >= best) / 2.0
+    raw_logit = (logit(calibrated_threshold) - intercept) / slope
+    return float(expit(raw_logit))
+
+
+def _f1_curve(y, p):
+    """THS 全点でのF1をベクトル化して一括計算する。argmaxのブートストラップ用。"""
+    mask = p[:, None] >= THS[None, :]          # (n, n_th)
+    tp = (y[:, None] * mask).sum(axis=0)
+    pp = mask.sum(axis=0)
+    ap = y.sum()
+    den = pp + ap
+    return np.where(den > 0, 2.0 * tp / np.maximum(den, 1), 0.0)
+
+
+def _boot_mean_threshold(pA, yA, n_boot=300, seed=0):
+    """A の OOF をブートストラップし、各リサンプルの最適閾値を平均する。
+
+    `fold_mean` は5foldしかメンバーが無く、各推定が A の1/5 でしか測られない。
+    ブートストラップなら毎回 A 全体と同じサイズで数百メンバー取れるので、
+    単一argmax(oof_best)の winner's curse をより強く均せる。
+    """
+    rng = np.random.default_rng(seed)
+    n = len(yA)
+    ths = np.empty(n_boot)
+    for b in range(n_boot):
+        idx = rng.integers(0, n, n)
+        ths[b] = THS[int(np.argmax(_f1_curve(yA[idx], pA[idx])))]
+    return float(ths.mean())
+
+
+def _rule_mean_threshold(pA, yA, folds):
+    """性質の違う3則(oof_best / fold_mean / plateau_mid)の閾値を平均する。
+
+    同一則のリサンプル平均(boot_mean)とは別方向のアンサンブル。
+    """
+    best = _best_th(yA, pA)
+    curves, argmax, _ = _fold_curve_thresholds(pA, yA, folds)
+    return float(np.mean([best, argmax.mean(), _plateau_midpoint(curves)]))
+
+
+def _cbpe_f1(s, t):
+    """較正済みスコアsだけから閾値tでのF1を推定する（ラベル不要）。
+
+    Average Confidence 推定量（NannyML CBPE と同型）:
+        TP=Σ_{s>=t} s   FP=Σ_{s>=t}(1-s)   FN=Σ_{s<t} s
+    ラベルの実現値に依存しないので、経験argmaxのような winner's curse が
+    原理的に起きない。前提は較正済みであることだけ。
+    """
+    hi, lo = s[s >= t], s[s < t]
+    tp, fn, fp = hi.sum(), lo.sum(), (1.0 - hi).sum()
+    den = 2.0 * tp + fp + fn
+    return float(2.0 * tp / den) if den > 0 else 0.0
+
+
+def _cbpe_threshold(pB):
+    """B の未ラベルスコア上で CBPE推定F1 を最大化する閾値。"""
+    return float(THS[int(np.argmax([_cbpe_f1(pB, t) for t in THS]))])
+
+
+def _cbpe_platt_threshold(pA, yA, pB):
+    """A のOOFだけでPlatt校正してから B 上でCBPE。生スコア閾値へ逆変換して返す。
+
+    素のCBPEは全体較正が良くても条件付き較正のズレで系統誤差を持つ
+    （seed42のOOF実測: 低閾値で-0.027、高閾値で+0.009）。1変数Plattで
+    そのズレだけ吸収する。B のラベルは校正にも argmax にも使わない。
+    """
+    x = to_logit(pA).reshape(-1, 1)
+    cal = LogisticRegression(C=1.0, max_iter=2000, random_state=0)
+    cal.fit(x, yA)
+    slope = float(cal.coef_[0][0])
+    intercept = float(cal.intercept_[0])
+    if slope <= 0:
+        raise RuntimeError(f"Platt校正の傾きが非正: {slope}")
+    pB_cal = cal.predict_proba(to_logit(pB).reshape(-1, 1))[:, 1]
+    t_cal = _cbpe_threshold(pB_cal)
+    raw_logit = (logit(t_cal) - intercept) / slope
+    return float(expit(raw_logit))
 
 
 def _fold_curve_thresholds(pA, yA, folds):
@@ -246,13 +349,20 @@ def _thresholds(pA, yA, pB, folds, rules):
     rate      A での予測正例率を B のスコア分位点に転写（rate matching）
     half_f1   達成F1の半分。校正済み確率のF1最適閾値は F1*/2 という既知の関係を
               使う。自由度が最小＝最も過学習しにくい
+    platt_half_f1 AのOOFだけで1変数Platt校正し、校正後のF1*/2を生スコア閾値へ
+              逆変換する。Bラベルは校正にも使わない
+    cbpe      B の未ラベルスコアからCBPE(Average Confidence)でF1を推定し最大化。
+              ラベルの実現値を使わないので winner's curse が起きず、かつ
+              A(train側)ではなくB(本番側)の分布の上で最適化できる
+    cbpe_platt 同上だが、AのOOFで1変数Platt校正してからCBPEを取る。素のCBPEが
+              持つ条件付き較正のズレを吸収する狙い
     """
     out = {}
     best = None
     if {"oof_best", "rate", "half_f1"} & set(rules):
         best = _best_th(yA, pA)
     fold_curves = fold_argmax = fold_tie_mid = None
-    if {"fold_mean", "fold_median", "plateau_mid"} & set(rules):
+    if {"fold_mean", "fold_median", "plateau_mid", "rule_mean"} & set(rules):
         fold_curves, fold_argmax, fold_tie_mid = _fold_curve_thresholds(
             pA, yA, folds)
     for r in rules:
@@ -269,6 +379,16 @@ def _thresholds(pA, yA, pB, folds, rules):
             out[r] = float(np.quantile(pB, 1 - rate)) if 0 < rate < 1 else float(best)
         elif r == "half_f1":
             out[r] = float(f1_score(yA, (pA >= best).astype(int)) / 2)
+        elif r == "platt_half_f1":
+            out[r] = _platt_half_f1_raw_threshold(pA, yA)
+        elif r == "cbpe":
+            out[r] = _cbpe_threshold(pB)
+        elif r == "cbpe_platt":
+            out[r] = _cbpe_platt_threshold(pA, yA, pB)
+        elif r == "boot_mean":
+            out[r] = _boot_mean_threshold(pA, yA)
+        elif r == "rule_mean":
+            out[r] = _rule_mean_threshold(pA, yA, folds)
         else:
             raise ValueError(f"未知の閾値則: {r}")
     return out
@@ -281,15 +401,18 @@ def _score_at(y, p, th):
 
 def one_rep(X, y, txt, org, cols, rep, alpha, test_size, rules=("oof_best",),
             target="zero", e4=None, e7_model=None, linear_c=None, h30=None,
-            gam_c=None, knn=None, strict_lgbm=True):
+            gam_c=None, knn=None, strict_lgbm=True,
+            linear_preprocess="raw", linear_log_extra=False):
     idx = np.arange(len(y))
     A, B = train_test_split(idx, test_size=test_size, stratify=y, random_state=rep)
     cross, linear = e7_model is not None, linear_c is not None
     h30_absdiff = h30 is not None
     gam = gam_c is not None
     embed_knn = knn is not None
-    names = expert_names(cross, linear, h30_absdiff, gam, embed_knn)
-    subs = subsets(cross, linear, h30_absdiff, gam, embed_knn)
+    names = expert_names(cross, linear, h30_absdiff, gam, embed_knn,
+                         linear_log_extra)
+    subs = subsets(cross, linear, h30_absdiff, gam, embed_knn,
+                   linear_log_extra)
 
     # 2. A の中だけでエキスパートOOFを作る
     oof = {n: np.zeros(len(A)) for n in names}
@@ -298,7 +421,8 @@ def one_rep(X, y, txt, org, cols, rep, alpha, test_size, rules=("oof_best",),
     for tr, va in folds:
         p = fit_predict_experts(X, y, txt, org, A[tr], A[va], rep, cols, e4,
                                 e7_model, linear_c, h30, gam_c, knn,
-                                strict_lgbm)
+                                strict_lgbm, linear_preprocess,
+                                linear_log_extra)
         for n in names:
             oof[n][va] = p[n]
 
@@ -315,7 +439,8 @@ def one_rep(X, y, txt, org, cols, rep, alpha, test_size, rules=("oof_best",),
 
     # 4. A全体で再学習 -> B を予測
     pb = fit_predict_experts(X, y, txt, org, A, B, rep, cols, e4, e7_model,
-                             linear_c, h30, gam_c, knn, strict_lgbm)
+                             linear_c, h30, gam_c, knn, strict_lgbm,
+                             linear_preprocess, linear_log_extra)
     yB = y[B]
 
     # A側/B側のスコアを同じ形で並べる（閾値はAから、評価はBで）
@@ -347,10 +472,13 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
         e6_add_llm4=False, e1_add_h2=False, e6_h52_prune=False,
         e1_h54_prune=False, e6_add_noise_col=False, seed_offset=0,
         e2_h57_subscales=False, h2h7_both4=False, h2_stable_leverage=False,
-        strict_lgbm=True):
+        strict_lgbm=True, linear_preprocess="raw",
+        linear_log_extra=False, h58=False, e4_pca_dim=None):
+    if linear_log_extra and (not linear or linear_preprocess != "raw"):
+        raise ValueError("--linear-log-extraはraw E0bとの併用時だけ指定できる")
     train, test = pd.read_csv("data/train.csv"), pd.read_csv("data/test.csv")
     X, y, _ = build_features(train, test, finance_ratios=finance_ratios,
-                             survey_step=survey_step, cross=cross,
+                             survey_step=survey_step, cross=cross, h58=h58,
                              llm_makebuy=(llm_e0_core4_pruned or
                                           llm_e0_core4_pruned_e0_only_h2_both4 or
                                           h2h7_both4 or h2_stable_leverage),
@@ -367,7 +495,8 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
     txt = train[TEXT_COL].fillna("").astype(str).values
     org = load_org_text(train)
     # E4 の入力/モデル。org_embed=False なら現行と完全一致（e4=None 相当）。
-    e4_in, _, e4_model = e4_inputs(train, train, org_embed, concat_embed)
+    e4_in, _, e4_model = e4_inputs(train, train, org_embed, concat_embed,
+                                   e4_pca_dim=e4_pca_dim)
     e4 = (e4_in, e4_model) if (org_embed or concat_embed) else None
     e7 = e7_model if cross else None
     lin = linear_c if linear else None
@@ -402,18 +531,24 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
         c6 = c6 + ["_NOISE_CONTROL"]
     cols = (c0, c0b,
             e1_finance_cols(with_ratios=finance_ratios, with_h2=e1_add_h2,
-                            h54_prune=e1_h54_prune),
+                            h54_prune=e1_h54_prune, with_h58=h58),
             e2_survey_cols(with_step=survey_step,
                           h57_subscales=e2_h57_subscales), c6,
             e7_cross_cols() if cross else None)
-    print(f"A={int(len(y) * (1 - test_size))}行 / B(ホールドアウト)={int(len(y) * test_size)}行"
+    n_test = int(np.ceil(len(y) * test_size))
+    n_train = len(y) - n_test
+    ratio_note = (f", E1にH21財務比{5 if h58 else 4}本"
+                  + ("(H58込み)" if h58 else "")) if finance_ratios else ""
+    print(f"A={n_train}行 / B(ホールドアウト)={n_test}行"
           f" x {n_reps}リピート, alpha={alpha}, メタ縮小先={target}"
-          f"{', E1にH21財務比4本' if finance_ratios else ''}"
+          f"{ratio_note}"
           f"{', E2にH22閾値指標4本' if survey_step else ''}"
           f"{', E4を[組織図;企業概要]連結embeddingに差し替え' if concat_embed else ''}"
           f"{', E4を組織図embeddingに差し替え' if org_embed and not concat_embed else ''}"
           f"{f', E7(H27 不満×財務, {e7_model})を追加' if cross else ''}"
           f"{f', E0b(H28 94列one-hot+LR, C={linear_c:g})を追加' if linear else ''}"
+          f"{f', E0b数値前処理={linear_preprocess}' if linear else ''}"
+          f"{', 符号付き対数E0bを追加' if linear_log_extra else ''}"
           f"{', E0/E0bをLLM親4軸のpruned構成へ変更' if llm_e0_core4_pruned else ''}"
           f"{', E0をpruned+LLM親4軸、H2財務4列をE0/E0bへ共有' if llm_e0_core4_pruned_e0_only_h2_both4 else ''}"
           f"{', E6のDX展望_手動辞書22列を削除' if e6_drop_dx_manual else ''}"
@@ -437,7 +572,7 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
         print(f"  rep {rep + 1}/{n_reps} (seed={seed}) ...", flush=True)
         r, w, a = one_rep(X, y, txt, org, cols, seed, alpha, test_size, rules,
                           target, e4, e7, lin, h30, gam_value, knn,
-                          strict_lgbm)
+                          strict_lgbm, linear_preprocess, linear_log_extra)
         ws.append(w)
         alphas.append(a)
         for (m, rule), v in r.items():
@@ -482,7 +617,8 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
             print(f"  ΔF1 {m:12s} {r:9s}: mean {d.mean():+.4f}  "
                   f"正 {int((d > 0).sum())}/{len(d)}  各rep {np.round(d.values, 4)}")
 
-    subs = subsets(cross, linear, h30_absdiff, gam, embed_knn)
+    subs = subsets(cross, linear, h30_absdiff, gam, embed_knn,
+                   linear_log_extra)
     print("\n=== meta_6本(現本命) との対リピート差分 ===")
     for label in subs:
         if label == "meta_6本":
@@ -543,6 +679,27 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
                   f"正 {d['n_pos']}/{d['n']}  min {d['min']:+.4f}  max {d['max']:+.4f}")
         print(f"  判定 => {result}")
 
+    if linear_log_extra:
+        base_names = expert_names(cross, linear, h30_absdiff, gam, embed_knn)
+        candidate_names = expert_names(
+            cross, linear, h30_absdiff, gam, embed_knn,
+            linear_log_extra=True)
+        base_subsets = subsets(cross, linear, h30_absdiff, gam, embed_knn)
+        base_label = next(
+            label for label, members in reversed(list(base_subsets.items()))
+            if tuple(members) == tuple(base_names)
+        )
+        candidate_label = f"meta_{len(candidate_names)}本_log"
+        base_df = df[(df.model == base_label) & (df.rule == ref)].sort_values("rep")
+        candidate_df = df[(df.model == candidate_label) & (df.rule == ref)].sort_values("rep")
+        result, deltas = verdict(base_df, candidate_df)
+        print(f"\n=== E0b二重化正式判定: {candidate_label} - {base_label} ===")
+        for key in ("auc", "ap", "f1"):
+            d = deltas[key]
+            print(f"  Δ{key.upper():3s}: mean {d['mean']:+.4f}  "
+                  f"正 {d['n_pos']}/{d['n']}  min {d['min']:+.4f}  max {d['max']:+.4f}")
+        print(f"  判定 => {result}")
+
     print("\n=== メタの重み (rep平均, 正規化%) ===")
     for label in subs:
         vals = pd.DataFrame([w[label] for w in ws])
@@ -560,6 +717,12 @@ if __name__ == "__main__":
     p.add_argument("--test-size", type=float, default=0.35)
     p.add_argument("--finance-ratios", action="store_true",
                    help="E1 に H21 財務比4本を足す（E0は現行94列のまま）")
+    p.add_argument("--e4-pca-dim", type=int, default=None,
+                   help="E4の連結埋め込みを全3072次元からPCAでこの次元へ畳む"
+                        "（--concat-embed と併用。既定Noneで従来のMRL切り詰め）")
+    p.add_argument("--h58", action="store_true",
+                   help="H58(無形投資_減価償却比)を財務比の5本目として足す"
+                        "（--finance-ratios と併用。単独指定は無効）")
     p.add_argument("--survey-step", action="store_true",
                    help="E2 に H22 閾値指標4本を足す（E0は現行94列のまま）")
     p.add_argument("--org-embed", action="store_true",
@@ -575,6 +738,11 @@ if __name__ == "__main__":
                    help="H28 の E0b(94列 one-hot+LR)を足す")
     p.add_argument("--linear-c", type=float, default=LINEAR_C,
                    help="E0b の LR の C（既定 0.1）")
+    p.add_argument("--linear-preprocess", choices=E0B_NUMERIC_TRANSFORMS,
+                   default="raw",
+                   help="E0bの金額・規模列の前処理。signed_logは符号付きlog1p")
+    p.add_argument("--linear-log-extra", action="store_true",
+                   help="raw E0bを残し、符号付きlog1p版E0bを追加Expertにする")
     p.add_argument("--h30-absdiff", action="store_true",
                    help="H30の3文書間絶対差embeddingを9本目に追加")
     p.add_argument("--gam", action="store_true",
@@ -633,4 +801,5 @@ if __name__ == "__main__":
         a.e6_drop_dx_manual, a.e6_add_llm4, a.e1_add_h2, a.e6_h52_prune,
         a.e1_h54_prune, a.e6_add_noise_col, a.seed_offset,
         a.e2_h57_subscales, a.h2h7_both4, a.h2_stable_leverage,
-        a.strict_lgbm)
+        a.strict_lgbm, a.linear_preprocess, a.linear_log_extra, a.h58,
+        a.e4_pca_dim)
