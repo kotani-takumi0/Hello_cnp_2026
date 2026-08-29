@@ -156,15 +156,16 @@ def run_diag(seed, candidate):
           f"--mode compare --n-seeds 10 --model {pick} --candidate {candidate}")
 
 
-def run_compare(n_seeds, model, candidate):
+def run_compare(n_seeds, model, candidate, h2h7_both4=False):
     cfg = CANDIDATES[candidate]
     e11_name, prefix = cfg["name"], cfg["prefix"]
+    base_label = "h2h7both4" if h2h7_both4 else "exp032"
     rows, weights, payloads = [], [], []
     for seed in range(n_seeds):
         print(f"\n=== seed {seed}/{n_seeds - 1} ===", flush=True)
         y, oof, te = compute_expert_preds(
             seed, concat_embed=True, cross=True, e7_model="lr",
-            linear=True, linear_c=0.03,
+            linear=True, linear_c=0.03, h2h7_both4=h2h7_both4,
         )
         yy, candidate_oof, candidate_test = e11_oof(seed, model, candidate)
         assert np.array_equal(y, yy)
@@ -179,26 +180,27 @@ def run_compare(n_seeds, model, candidate):
         cand_pred, _, w, _ = blend_oof(
             y, oof, te, seed, None, experts=candidate_members
         )
-        rows.append(dict(seed=seed, variant="exp032", **_scores(y, base_pred)))
-        rows.append(dict(seed=seed, variant=f"exp032+{cfg['label']}", **_scores(y, cand_pred)))
+        rows.append(dict(seed=seed, variant=base_label, **_scores(y, base_pred)))
+        rows.append(dict(seed=seed, variant=f"{base_label}+{cfg['label']}", **_scores(y, cand_pred)))
         rows.append(dict(seed=seed, variant=f"{cfg['label']}単体", **_scores(y, candidate_oof)))
         weights.append(pd.Series(w, index=candidate_members, name=seed))
 
     scores = pd.DataFrame(rows)
-    scores.to_csv(os.path.join(OUT_DIR, f"_{prefix}_10seed_scores.csv"), index=False)
-    base = scores[scores.variant == "exp032"].sort_values("seed").reset_index(drop=True)
-    cand = scores[scores.variant == f"exp032+{cfg['label']}"] .sort_values("seed").reset_index(drop=True)
+    tag = "_h2h7both4v2eq" if h2h7_both4 else ""
+    scores.to_csv(os.path.join(OUT_DIR, f"_{prefix}_10seed_scores{tag}.csv"), index=False)
+    base = scores[scores.variant == base_label].sort_values("seed").reset_index(drop=True)
+    cand = scores[scores.variant == f"{base_label}+{cfg['label']}"].sort_values("seed").reset_index(drop=True)
     base.attrs["n_feat"], cand.attrs["n_feat"] = len(BASE_MEMBERS), len(BASE_MEMBERS) + 1
     result, deltas = verdict(base, cand)
     print("\n" + format_report(
-        cfg["label"], f"exp032へ{cfg['desc']}エキスパートを追加",
+        cfg["label"], f"{base_label}へ{cfg['desc']}エキスパートを追加",
         base, cand, result, deltas,
     ))
 
     W = pd.DataFrame(weights)
     Wn = W.div(W.sum(axis=1), axis=0) * 100
-    Wn.to_csv(os.path.join(OUT_DIR, f"_{prefix}_10seed_weights.csv"))
-    print(f"\n=== exp032+{cfg['label']} メタ重み (正規化%, 10seed) ===")
+    Wn.to_csv(os.path.join(OUT_DIR, f"_{prefix}_10seed_weights{tag}.csv"))
+    print(f"\n=== {base_label}+{cfg['label']} メタ重み (正規化%, 10seed) ===")
     for col in Wn.mean().sort_values(ascending=False).index:
         print(f"  {col:16s} {Wn[col].mean():5.1f}% ±{Wn[col].std():4.1f}")
 
@@ -253,8 +255,10 @@ if __name__ == "__main__":
     parser.add_argument("--n-seeds", type=int, default=10)
     parser.add_argument("--model", choices=("lgbm", "lr"), default="lr")
     parser.add_argument("--candidate", choices=tuple(CANDIDATES), default="axes")
+    parser.add_argument("--h2h7-both4", action="store_true",
+                        help="土台をexp032からH2+H7-both4(修正版, 現本命)へ差し替える")
     args = parser.parse_args()
     if args.mode == "diag":
         run_diag(args.seed, args.candidate)
     else:
-        run_compare(args.n_seeds, args.model, args.candidate)
+        run_compare(args.n_seeds, args.model, args.candidate, args.h2h7_both4)

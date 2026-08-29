@@ -82,13 +82,15 @@ def _metric(y, p):
     return _scores(y, p)
 
 
-def run_diag(seed):
+def run_diag(seed, h2h7_both4=False):
+    tag = "_h2h7both4v2eq" if h2h7_both4 else ""
     base_path = os.path.join(
-        OUT_DIR, f"_experts_seed{seed}_concatemb_crosslr_lin0.03.npz"
+        OUT_DIR, f"_experts_seed{seed}_concatemb_crosslr_lin0.03{tag}.npz"
     )
     if not os.path.exists(base_path):
         compute_expert_preds(seed, concat_embed=True, cross=True,
-                             e7_model="lr", linear=True, linear_c=0.03)
+                             e7_model="lr", linear=True, linear_c=0.03,
+                             h2h7_both4=h2h7_both4)
     base_npz = np.load(base_path)
     y = base_npz["y"]
     base = {n: base_npz[f"oof_{n}"] for n in BASE_MEMBERS}
@@ -127,13 +129,13 @@ def run_diag(seed):
           f"({table.loc[f'{E10_NAME}({pick})', 'AP倍']:.2f}倍)")
 
 
-def run_compare(n_seeds, model):
+def run_compare(n_seeds, model, h2h7_both4=False):
     rows, weights, payloads = [], [], []
     for seed in range(n_seeds):
         print(f"\n=== seed {seed}/{n_seeds - 1} ===", flush=True)
         y, oof, te = compute_expert_preds(
             seed, concat_embed=True, cross=True, e7_model="lr",
-            linear=True, linear_c=0.03,
+            linear=True, linear_c=0.03, h2h7_both4=h2h7_both4,
         )
         yy, e10_oof_pred, e10_test_pred = e10_oof(seed, model)
         assert np.array_equal(y, yy)
@@ -148,19 +150,21 @@ def run_compare(n_seeds, model):
         cand_pred, _, w, _ = blend_oof(
             y, oof, te, seed, None, experts=cand_members
         )
-        rows.append(dict(seed=seed, variant="exp032", **_metric(y, base_pred)))
-        rows.append(dict(seed=seed, variant="exp032+H34", **_metric(y, cand_pred)))
+        base_label = "h2h7both4" if h2h7_both4 else "exp032"
+        rows.append(dict(seed=seed, variant=base_label, **_metric(y, base_pred)))
+        rows.append(dict(seed=seed, variant=f"{base_label}+H34", **_metric(y, cand_pred)))
         rows.append(dict(seed=seed, variant="H34単体", **_metric(y, e10_oof_pred)))
         weights.append(pd.Series(w, index=cand_members, name=seed))
 
     scores = pd.DataFrame(rows)
-    scores.to_csv(os.path.join(OUT_DIR, "_h34_10seed_scores.csv"), index=False)
-    base = scores[scores.variant == "exp032"].sort_values("seed").reset_index(drop=True)
-    cand = scores[scores.variant == "exp032+H34"].sort_values("seed").reset_index(drop=True)
+    tag = "_h2h7both4v2eq" if h2h7_both4 else ""
+    scores.to_csv(os.path.join(OUT_DIR, f"_h34_10seed_scores{tag}.csv"), index=False)
+    base = scores[scores.variant == base_label].sort_values("seed").reset_index(drop=True)
+    cand = scores[scores.variant == f"{base_label}+H34"].sort_values("seed").reset_index(drop=True)
     base.attrs["n_feat"], cand.attrs["n_feat"] = len(BASE_MEMBERS), len(BASE_MEMBERS) + 1
     result, deltas = verdict(base, cand)
     print("\n" + format_report(
-        "H34", "exp032へ収益力×DX意欲エキスパートを追加",
+        "H34", f"{base_label}へ収益力×DX意欲エキスパートを追加",
         base, cand, result, deltas,
     ))
 
@@ -213,8 +217,10 @@ if __name__ == "__main__":
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--n-seeds", type=int, default=10)
     p.add_argument("--model", choices=("lgbm", "lr"), default="lr")
+    p.add_argument("--h2h7-both4", action="store_true",
+                   help="土台をexp032からH2+H7-both4(修正版, 現本命)へ差し替える")
     a = p.parse_args()
     if a.mode == "diag":
-        run_diag(a.seed)
+        run_diag(a.seed, a.h2h7_both4)
     else:
-        run_compare(a.n_seeds, a.model)
+        run_compare(a.n_seeds, a.model, a.h2h7_both4)
