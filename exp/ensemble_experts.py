@@ -82,6 +82,14 @@ OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 THS = np.arange(0.05, 0.95, 0.005)
 DX_SCORE_COL = "DX展望_購入確率"
 SURVEY_LR = dict(C=1.0, max_iter=2000, random_state=0)
+# E2 が「業務ツール未導入」(a6=いいえ → a7 が欠損) の企業を、満足度スケールの
+# どこに置くか。既定 0.0 は「非常に低い」(1) よりさらに下という位置づけで、
+# survey_features.py の domain 値 3.3（未導入の購入率 0.222 は a7=3 の 0.247 と
+# a7=4 の 0.169 の間）と食い違っている。既定を変えないのは exp019 以前の記録値を
+# コード変更なしで再現できるようにするため。詳細は h95。
+SURVEY_A7_COL = "アンケート７"
+SURVEY_A7_ISNA_COL = "アンケート７_isna"
+SURVEY_A7_FILL = 0.0
 CROSS_LR = dict(C=1.0, max_iter=2000, random_state=0)
 # H28 E0b: 田中さん nb018 の設定（one-hot + 標準化 + C=0.1）を出発点にする。
 LINEAR_C = 0.1
@@ -212,11 +220,24 @@ def _lgbm(Xtr, ytr, Xva, yva, Xte, seed):
     return m.predict(Xva, num_iteration=n), m.predict(Xte, num_iteration=n)
 
 
-def _survey_lr(Xtr, ytr, Xva, Xte):
+def _survey_lr(Xtr, ytr, Xva, Xte, a7_fill=SURVEY_A7_FILL):
+    """E2。a7_fill は未導入企業を満足度スケールのどこに置くかを決める。
+
+    a7 の欠損は `dataset.ZERO_FILL` が既に 0 で埋めているので、ここでは
+    `アンケート７_isna` で該当行を見つけて置き直す。E2 の入力だけが変わり、
+    E0/E0b/E7 が見る 0 埋めはそのまま（それらの記録値を壊さないため）。
+    """
+    def fill(frame):
+        if a7_fill and {SURVEY_A7_COL, SURVEY_A7_ISNA_COL} <= set(frame.columns):
+            imputed = frame[SURVEY_A7_ISNA_COL] == 1
+            frame = frame.assign(**{
+                SURVEY_A7_COL: frame[SURVEY_A7_COL].mask(imputed, a7_fill)})
+        return frame.fillna(0)
+
     model = make_pipeline(StandardScaler(), LogisticRegression(**SURVEY_LR))
-    model.fit(Xtr.fillna(0), ytr)
-    return (model.predict_proba(Xva.fillna(0))[:, 1],
-            model.predict_proba(Xte.fillna(0))[:, 1])
+    model.fit(fill(Xtr), ytr)
+    return (model.predict_proba(fill(Xva))[:, 1],
+            model.predict_proba(fill(Xte))[:, 1])
 
 
 def _cross_lr(Xtr, ytr, Xva, Xte):
@@ -310,7 +331,7 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
                          h2_stable_leverage=False,
                          linear_preprocess="raw",
                          linear_log_extra=False, h58=False,
-                         e4_pca_dim=None):
+                         e4_pca_dim=None, a7_fill=SURVEY_A7_FILL):
     """各エキスパートの OOF と test 予測を返す。重いのでnpzにキャッシュする。
 
     キャッシュ名に構成タグを含める。専用列のあり/なしで中身が変わるので、
@@ -344,7 +365,8 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
            + ("_h2h7both4v2eq" if h2h7_both4 else "")
            + ("_h2stablelevv2eq" if h2_stable_leverage else "")
            + ("_h58" if h58 else "")
-           + (f"_e4pca{e4_pca_dim}" if e4_pca_dim else ""))
+           + (f"_e4pca{e4_pca_dim}" if e4_pca_dim else "")
+           + (f"_a7fill{a7_fill:g}" if a7_fill != SURVEY_A7_FILL else ""))
     path = os.path.join(OUT_DIR, f"_experts_seed{seed}{tag}.npz")
     if cache and os.path.exists(path):
         d = np.load(path)
@@ -500,7 +522,7 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
             oof[name][va] = p
             te[name].append(q)
 
-        p, q = _survey_lr(Xtr[c2], y[tr], Xva[c2], Xte[c2])
+        p, q = _survey_lr(Xtr[c2], y[tr], Xva[c2], Xte[c2], a7_fill=a7_fill)
         oof["E2_survey"][va] = p
         te["E2_survey"].append(q)
 
@@ -601,7 +623,7 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
         h49_e0b_only=False, e1_h54_prune=False, h2h7_both4=False,
         h2_stable_leverage=False, output=None,
         linear_preprocess="raw", linear_log_extra=False, h58=False,
-        e4_pca_dim=None, alpha_rule="auto"):
+        e4_pca_dim=None, alpha_rule="auto", a7_fill=SURVEY_A7_FILL):
     default = expert_names(cross, linear, h30_absdiff, gam, embed_knn,
                            linear_log_extra)
     experts = default if experts is None else experts
@@ -630,7 +652,11 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
                                       h2_stable_leverage=h2_stable_leverage,
                                       linear_preprocess=linear_preprocess,
                                       linear_log_extra=linear_log_extra,
-                                      h58=h58, e4_pca_dim=e4_pca_dim)
+                                      h58=h58, e4_pca_dim=e4_pca_dim,
+                                      a7_fill=a7_fill)
+    if a7_fill != SURVEY_A7_FILL:
+        print(f"E2: 業務ツール未導入企業の a7 を {a7_fill:g} に置く構成"
+              f"（既定は {SURVEY_A7_FILL:g}）")
     if target != "zero":
         print(f"メタ重みの縮小先: {target}")
     if finance_ratios:
@@ -753,7 +779,8 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
                  + ("_h2h7both4v2eq" if h2h7_both4 else "")
                  + ("_h2stablelevv2eq" if h2_stable_leverage else "")
                  + ("_h58" if h58 else "")
-                 + (f"_e4pca{e4_pca_dim}" if e4_pca_dim else ""))
+                 + (f"_e4pca{e4_pca_dim}" if e4_pca_dim else "")
+                 + (f"_a7fill{a7_fill:g}" if a7_fill != SURVEY_A7_FILL else ""))
         t_tag = (f"_pos{test_pos}" if test_pos is not None
                  else f"_th{threshold}" if threshold is not None else "")
         out = output or (f"submission/submission_ensemble_experts_seed{seed}"
@@ -788,6 +815,9 @@ if __name__ == "__main__":
                         "（--finance-ratios と併用。単独指定は無効）")
     p.add_argument("--survey-step", action="store_true",
                    help="E2 に H22 閾値指標4本を足す（E0は現行94列のまま）")
+    p.add_argument("--a7-fill", type=float, default=SURVEY_A7_FILL,
+                   help="E2で業務ツール未導入企業のa7を置く値。既定0.0は"
+                        "『非常に低い』(1)より下。survey_features.pyのdomain値は3.3")
     p.add_argument("--org-embed", action="store_true",
                    help="E4 を組織図の OpenAI embedding+LR に差し替える（E0は不変）")
     p.add_argument("--concat-embed", action="store_true",
@@ -875,4 +905,5 @@ if __name__ == "__main__":
         h2h7_both4=a.h2h7_both4,
         h2_stable_leverage=a.h2_stable_leverage,
         output=a.output, linear_preprocess=a.linear_preprocess,
-        linear_log_extra=a.linear_log_extra, alpha_rule=a.alpha_rule)
+        linear_log_extra=a.linear_log_extra, alpha_rule=a.alpha_rule,
+        a7_fill=a.a7_fill)

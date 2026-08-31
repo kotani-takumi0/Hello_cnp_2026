@@ -50,14 +50,14 @@ DRAWS_PER_BOOTSTRAP = 100
 PLATEAU_TOL = 1e-4
 
 
-def _load_predictions(alpha_rule="auto"):
+def _load_predictions(alpha_rule="auto", cache_path=CACHE):
     names = expert_names(cross=True, linear=True)
     expected = (
         "E0_anchor", "E1_finance", "E2_survey", "E3_dx_text",
         "E4_org_text", "E6_manual", "E7_cross", "E0b_linear",
     )
     assert names == expected, f"本番8 Expert構成が変わった: {names}"
-    cache = np.load(CACHE)
+    cache = np.load(cache_path)
     y = cache["y"].astype(int)
     oof = {name: cache[f"oof_{name}"] for name in names}
     test = {name: cache[f"te_{name}"] for name in names}
@@ -129,17 +129,20 @@ def _simulate_curve(y, p_oof, p_test, main_k):
 
 
 def run(output: Path, curve_path: Path, overwrite: bool = False,
-        alpha_rule: str = "auto", main_output: Path | None = None):
+        alpha_rule: str = "auto", main_output: Path | None = None,
+        cache_path: Path = CACHE):
     for path in (output, curve_path, main_output):
         if path is not None and path.exists() and not overwrite:
             raise FileExistsError(f"既存ファイルは上書きしない: {path}")
 
-    y, p_oof, p_test = _load_predictions(alpha_rule)
+    # 既定キャッシュ以外を指したときは、既存提出との一致を確かめる意味が無い。
+    stock = Path(cache_path) == Path(CACHE)
+    y, p_oof, p_test = _load_predictions(alpha_rule, cache_path)
     score = _scores(y, p_oof)
     main_threshold = float(score["f1"] / 2.0)
     main_label = (p_test >= main_threshold).astype(int)
     main_k = int(main_label.sum())
-    if alpha_rule == "auto":
+    if alpha_rule == "auto" and stock:
         assert main_k == 207, f"本命の正例数が変わった: {main_k}"
 
     test = pd.read_csv(ROOT / "data/test.csv")
@@ -150,7 +153,7 @@ def run(output: Path, curve_path: Path, overwrite: bool = False,
     )
     main_frame = pd.DataFrame({"企業ID": test["企業ID"], "pred": main_label})
     main_ordered = sample[["企業ID"]].merge(main_frame, on="企業ID", how="left")
-    if alpha_rule == "auto":
+    if alpha_rule == "auto" and stock:
         # 既定の土台では、既に提出済みの枠1と1行たりとも違わないことを確認する。
         existing = pd.read_csv(
             MAIN_SUBMISSION, header=None, names=["企業ID", "購入フラグ"],
@@ -211,6 +214,9 @@ if __name__ == "__main__":
     parser.add_argument("--alpha-rule", default="auto", choices=["auto", "1se"])
     parser.add_argument("--main-output", type=Path, default=None,
                         help="枠1も書き出す場合の出力先")
+    parser.add_argument("--cache", type=Path, default=CACHE,
+                        help="土台にするエキスパートキャッシュ。既定以外を指すと"
+                             "既存提出との一致確認は行わない")
     args = parser.parse_args()
     run(args.output, args.curve, args.overwrite, args.alpha_rule,
-        args.main_output)
+        args.main_output, args.cache)
