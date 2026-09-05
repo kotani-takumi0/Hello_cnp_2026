@@ -40,7 +40,8 @@ import pandas as pd
 from scipy.special import expit, logit
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
-from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.model_selection import (
+    RepeatedStratifiedKFold, StratifiedKFold, train_test_split)
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -404,7 +405,7 @@ def one_rep(X, y, txt, org, cols, rep, alpha, test_size, rules=("oof_best",),
             target="zero", e4=None, e7_model=None, linear_c=None, h30=None,
             gam_c=None, knn=None, strict_lgbm=True,
             linear_preprocess="raw", linear_log_extra=False,
-            alpha_rule="auto"):
+            alpha_rule="auto", n_splits=5, n_repeats=1, n_seeds=1):
     idx = np.arange(len(y))
     A, B = train_test_split(idx, test_size=test_size, stratify=y, random_state=rep)
     cross, linear = e7_model is not None, linear_c is not None
@@ -416,17 +417,37 @@ def one_rep(X, y, txt, org, cols, rep, alpha, test_size, rules=("oof_best",),
     subs = subsets(cross, linear, h30_absdiff, gam, embed_knn,
                    linear_log_extra)
 
-    # 2. A の中だけでエキスパートOOFを作る
+    # 2. A の中だけでエキスパートOOFを作る（n_seeds>1 ならシード平均）
+    #    A/B分割は rep で固定したまま、A内CVの分割seedとモデルseedだけを振る。
+    #    seeds[0] == rep なので n_seeds=1 は従来と完全に一致する。
+    seeds = [rep + j * 1000 for j in range(n_seeds)]
     oof = {n: np.zeros(len(A)) for n in names}
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=rep)
-    folds = list(skf.split(A, y[A]))
-    for tr, va in folds:
-        p = fit_predict_experts(X, y, txt, org, A[tr], A[va], rep, cols, e4,
-                                e7_model, linear_c, h30, gam_c, knn,
-                                strict_lgbm, linear_preprocess,
-                                linear_log_extra)
+    folds = []
+    for s_ in seeds:
+        hits = np.zeros(len(A))
+        oof_s = {n: np.zeros(len(A)) for n in names}
+        if n_repeats > 1:
+            splitter = RepeatedStratifiedKFold(
+                n_splits=n_splits, n_repeats=n_repeats, random_state=s_)
+        else:
+            splitter = StratifiedKFold(
+                n_splits=n_splits, shuffle=True, random_state=s_)
+        folds_s = list(splitter.split(A, y[A]))
+        for tr, va in folds_s:
+            p = fit_predict_experts(X, y, txt, org, A[tr], A[va], s_, cols, e4,
+                                    e7_model, linear_c, h30, gam_c, knn,
+                                    strict_lgbm, linear_preprocess,
+                                    linear_log_extra)
+            for n in names:
+                oof_s[n][va] += p[n]
+            hits[va] += 1
         for n in names:
-            oof[n][va] = p[n]
+            oof[n] += oof_s[n] / np.maximum(hits, 1.0)
+        # 閾値則(fold_mean/plateau_mid/rule_mean)はfold別F1曲線を使うので、
+        # 全シードのfoldを束ねて 5*n_seeds 本の推定から決める。
+        folds += folds_s
+    for n in names:
+        oof[n] /= n_seeds
 
     # 3. A のOOFで alpha と重みを決める（Bは一切見ない）
     yA = y[A]
@@ -443,10 +464,19 @@ def one_rep(X, y, txt, org, cols, rep, alpha, test_size, rules=("oof_best",),
         fitted[label] = (members, w, b)
         alphas[label] = a
 
-    # 4. A全体で再学習 -> B を予測
-    pb = fit_predict_experts(X, y, txt, org, A, B, rep, cols, e4, e7_model,
-                             linear_c, h30, gam_c, knn, strict_lgbm,
-                             linear_preprocess, linear_log_extra)
+    # 4. A全体で再学習 -> B を予測（同じシード集合で平均）
+    pb = None
+    for s_ in seeds:
+        p = fit_predict_experts(X, y, txt, org, A, B, s_, cols, e4, e7_model,
+                                linear_c, h30, gam_c, knn, strict_lgbm,
+                                linear_preprocess, linear_log_extra)
+        if pb is None:
+            pb = {n: np.asarray(v, dtype=float).copy() for n, v in p.items()}
+        else:
+            for n in pb:
+                pb[n] += p[n]
+    if n_seeds > 1:
+        pb = {n: v / n_seeds for n, v in pb.items()}
     yB = y[B]
 
     # A側/B側のスコアを同じ形で並べる（閾値はAから、評価はBで）
@@ -480,7 +510,7 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
         e2_h57_subscales=False, h2h7_both4=False, h2_stable_leverage=False,
         strict_lgbm=True, linear_preprocess="raw",
         linear_log_extra=False, h58=False, e4_pca_dim=None,
-        alpha_rule="auto"):
+        alpha_rule="auto", n_splits=5, n_repeats=1, n_seeds=1):
     if linear_log_extra and (not linear or linear_preprocess != "raw"):
         raise ValueError("--linear-log-extraはraw E0bとの併用時だけ指定できる")
     train, test = pd.read_csv("data/train.csv"), pd.read_csv("data/test.csv")
@@ -570,6 +600,10 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
           f"{f', E9(H32 embedding cosine-kNN, dim={KNN_DIM}, k={KNN_NEIGHBORS}, scale={KNN_DISTANCE_SCALE:g}, prior={KNN_PRIOR_STRENGTH:g})を追加' if embed_knn else ''}"
           f"{', strict LGBM(Bラベル非参照)' if strict_lgbm else ''}")
 
+    if n_seeds > 1:
+        print(f"シード平均 n_seeds={n_seeds}: 各repでA内OOFもB予測も "
+              f"seed=rep, rep+1000, ... の{n_seeds}本を平均する"
+              f"（A/B分割は rep のままなのでペア比較は保たれる）")
     if seed_offset:
         print(f"seed_offset={seed_offset}: 未使用のfresh seedで監査 "
               f"(実seed={seed_offset}..{seed_offset + n_reps - 1})")
@@ -580,7 +614,7 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
         r, w, a = one_rep(X, y, txt, org, cols, seed, alpha, test_size, rules,
                           target, e4, e7, lin, h30, gam_value, knn,
                           strict_lgbm, linear_preprocess, linear_log_extra,
-                          alpha_rule)
+                          alpha_rule, n_splits, n_repeats, n_seeds)
         ws.append(w)
         alphas.append(a)
         for (m, rule), v in r.items():
@@ -720,6 +754,10 @@ def run(n_reps, alpha, test_size, finance_ratios=False, rules=("oof_best",),
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--n-reps", type=int, default=3)
+    p.add_argument("--n-splits", type=int, default=5,
+                   help="A内CVの分割数。96仮説で一度も振っていない軸")
+    p.add_argument("--n-repeats", type=int, default=1,
+                   help="A内CVのリピート数。>1 で RepeatedStratifiedKFold になり、行ごとにn_repeats個のOOFを平均する（分割ノイズの平均化）")
     p.add_argument("--alpha", type=float, default=None,
                    help="省略時は A の中だけで自動選択")
     p.add_argument("--test-size", type=float, default=0.35)
@@ -781,6 +819,9 @@ if __name__ == "__main__":
                    help="H2財務4本の負債比率/ROEをFCF比率/現金ROAへ差替(legacy_batch1で5/5満点だった組合せ)")
     p.add_argument("--h2-stable-leverage", action="store_true",
                    help="H2の負債比率(不安定, train std=588)を負債資産比率(std=0.22)へ差替")
+    p.add_argument("--n-seeds", type=int, default=1,
+                   help="A内OOFとB予測を何シード平均するか（GM Playbook技法7）。"
+                        "各repで seed=rep, rep+1000, ... を使う。既定1は従来と同一")
     p.add_argument("--seed-offset", type=int, default=0,
                    help="A/B分割・fold・モデルseedに一律で足すオフセット。"
                         "0..n_reps-1のdevelopment seedと重ならないfresh seedで"
@@ -813,4 +854,4 @@ if __name__ == "__main__":
         a.e1_h54_prune, a.e6_add_noise_col, a.seed_offset,
         a.e2_h57_subscales, a.h2h7_both4, a.h2_stable_leverage,
         a.strict_lgbm, a.linear_preprocess, a.linear_log_extra, a.h58,
-        a.e4_pca_dim, a.alpha_rule)
+        a.e4_pca_dim, a.alpha_rule, a.n_splits, a.n_repeats, a.n_seeds)

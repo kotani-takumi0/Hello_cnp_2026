@@ -539,6 +539,41 @@ def compute_expert_preds(seed, cache=True, finance_ratios=False,
     return y, oof, te
 
 
+def compute_expert_preds_seedavg(seed, n_seeds=1, **kw):
+    """seed, seed+1, ... seed+n_seeds-1 の各シードで独立にOOF/test予測を作り、
+    シード間で平均して返す（NVIDIA GM Playbook 技法7 のシード平均）。
+
+    シードは `StratifiedKFold(random_state=seed)` の分割と LightGBM/LR の
+    乱数の両方に効くので、シードを変えると分割も学習も独立に振れる。平均は
+    **メタ合成より前段**に置く（合成OOF・alpha選択・閾値はすべて平均後の
+    予測の上で決める）。
+
+    n_seeds=1 のときは compute_expert_preds を1回呼ぶだけで、従来と
+    数値的に完全一致する。
+    """
+    if n_seeds < 1:
+        raise ValueError("n_seeds は1以上でなければならない")
+    if n_seeds == 1:
+        return compute_expert_preds(seed, **kw)
+    y = oof_sum = te_sum = None
+    for i, s in enumerate(range(seed, seed + n_seeds), 1):
+        print(f"[seed平均 {i}/{n_seeds}] seed={s}", flush=True)
+        y_s, oof_s, te_s = compute_expert_preds(s, **kw)
+        if oof_sum is None:
+            y = y_s
+            oof_sum = {n: np.asarray(v, dtype=float).copy()
+                       for n, v in oof_s.items()}
+            te_sum = {n: np.asarray(v, dtype=float).copy()
+                      for n, v in te_s.items()}
+        else:
+            assert np.array_equal(y, y_s), "シード間でyが一致しない"
+            for n in oof_sum:
+                oof_sum[n] += oof_s[n]
+                te_sum[n] += te_s[n]
+    return (y, {n: v / n_seeds for n, v in oof_sum.items()},
+            {n: v / n_seeds for n, v in te_sum.items()})
+
+
 def _nested_text(txt_tr, y_tr, txt_va, txt_te):
     """E0用。nested_text_pred に test 予測を足した版。"""
     o, v = nested_text_pred(txt_tr, y_tr, txt_va)
@@ -623,37 +658,42 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
         h49_e0b_only=False, e1_h54_prune=False, h2h7_both4=False,
         h2_stable_leverage=False, output=None,
         linear_preprocess="raw", linear_log_extra=False, h58=False,
-        e4_pca_dim=None, alpha_rule="auto", a7_fill=SURVEY_A7_FILL):
+        e4_pca_dim=None, alpha_rule="auto", a7_fill=SURVEY_A7_FILL,
+        n_seeds=1):
     default = expert_names(cross, linear, h30_absdiff, gam, embed_knn,
                            linear_log_extra)
     experts = default if experts is None else experts
-    y, oof, te = compute_expert_preds(seed, cache=not no_cache,
-                                      finance_ratios=finance_ratios,
-                                      survey_step=survey_step,
-                                      org_embed=org_embed,
-                                      concat_embed=concat_embed,
-                                      cross=cross, e7_model=e7_model,
-                                      linear=linear, linear_c=linear_c,
-                                      h30_absdiff=h30_absdiff,
-                                      gam=gam, gam_c=gam_c,
-                                      embed_knn=embed_knn,
-                                      h37_priority=h37_priority,
-                                      llm_e0_replace_dx_manual=llm_e0_replace_dx_manual,
-                                      llm_e0_core4_pruned=llm_e0_core4_pruned,
-                                      llm_e0_core4_pruned_e0_only=llm_e0_core4_pruned_e0_only,
-                                      llm_e0_core4_pruned_e0_only_h2=llm_e0_core4_pruned_e0_only_h2,
-                                      llm_e0_core4_pruned_e0_only_h2_h21=llm_e0_core4_pruned_e0_only_h2_h21,
-                                      llm_e0_core4_pruned_e0_only_h2_both4=llm_e0_core4_pruned_e0_only_h2_both4,
-                                      e0_restore_missing_flags=e0_restore_missing_flags,
-                                      h21_anchor_both=h21_anchor_both,
-                                      h49_e0b_only=h49_e0b_only,
-                                      e1_h54_prune=e1_h54_prune,
-                                      h2h7_both4=h2h7_both4,
-                                      h2_stable_leverage=h2_stable_leverage,
-                                      linear_preprocess=linear_preprocess,
-                                      linear_log_extra=linear_log_extra,
-                                      h58=h58, e4_pca_dim=e4_pca_dim,
-                                      a7_fill=a7_fill)
+    y, oof, te = compute_expert_preds_seedavg(
+        seed, n_seeds, cache=not no_cache,
+        finance_ratios=finance_ratios,
+        survey_step=survey_step,
+        org_embed=org_embed,
+        concat_embed=concat_embed,
+        cross=cross, e7_model=e7_model,
+        linear=linear, linear_c=linear_c,
+        h30_absdiff=h30_absdiff,
+        gam=gam, gam_c=gam_c,
+        embed_knn=embed_knn,
+        h37_priority=h37_priority,
+        llm_e0_replace_dx_manual=llm_e0_replace_dx_manual,
+        llm_e0_core4_pruned=llm_e0_core4_pruned,
+        llm_e0_core4_pruned_e0_only=llm_e0_core4_pruned_e0_only,
+        llm_e0_core4_pruned_e0_only_h2=llm_e0_core4_pruned_e0_only_h2,
+        llm_e0_core4_pruned_e0_only_h2_h21=llm_e0_core4_pruned_e0_only_h2_h21,
+        llm_e0_core4_pruned_e0_only_h2_both4=llm_e0_core4_pruned_e0_only_h2_both4,
+        e0_restore_missing_flags=e0_restore_missing_flags,
+        h21_anchor_both=h21_anchor_both,
+        h49_e0b_only=h49_e0b_only,
+        e1_h54_prune=e1_h54_prune,
+        h2h7_both4=h2h7_both4,
+        h2_stable_leverage=h2_stable_leverage,
+        linear_preprocess=linear_preprocess,
+        linear_log_extra=linear_log_extra,
+        h58=h58, e4_pca_dim=e4_pca_dim,
+        a7_fill=a7_fill)
+    if n_seeds > 1:
+        print(f"シード平均: seed={seed}..{seed + n_seeds - 1} の{n_seeds}本の"
+              f"OOF/test予測を平均してからメタ合成する")
     if a7_fill != SURVEY_A7_FILL:
         print(f"E2: 業務ツール未導入企業の a7 を {a7_fill:g} に置く構成"
               f"（既定は {SURVEY_A7_FILL:g}）")
@@ -752,6 +792,7 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
         assert sub["pred"].notna().all(), "予測欠損あり"
         tag = alpha_rule if alpha is None else str(alpha)
         n_tag = "" if tuple(experts) == default else f"_{len(experts)}experts"
+        s_tag = f"_{n_seeds}seed" if n_seeds > 1 else ""
         r_tag = (("_ratio" if finance_ratios else "")
                  + ("_step" if survey_step else "")
                  + ("_concatemb" if concat_embed else
@@ -784,7 +825,7 @@ def run(seed, alpha, submit, no_cache, experts=None, finance_ratios=False,
         t_tag = (f"_pos{test_pos}" if test_pos is not None
                  else f"_th{threshold}" if threshold is not None else "")
         out = output or (f"submission/submission_ensemble_experts_seed{seed}"
-                         f"_a{tag}{n_tag}{r_tag}{t_tag}.csv")
+                         f"{s_tag}_a{tag}{n_tag}{r_tag}{t_tag}.csv")
         if os.path.exists(out):
             raise FileExistsError(f"既存の提出物は上書きしない: {out}")
         sub.assign(pred=sub["pred"].astype(int)).to_csv(
@@ -874,9 +915,14 @@ if __name__ == "__main__":
     g.add_argument("--test-pos", type=int,
                    help="testの予測正例数を指定して閾値を逆算（既定はOOF最適）")
     g.add_argument("--threshold", type=float, help="閾値を直接指定")
-    p.add_argument("--alpha-rule", default="auto", choices=["auto", "1se"],
-                   help="メタのalpha選択則。1se は最良から1SE以内で最小のalphaに"
-                        "留める（既定 auto は現行のargmax）")
+    p.add_argument("--n-seeds", type=int, default=1,
+                   help="エキスパートのOOF/test予測を何シード平均するか。"
+                        "seed..seed+n-1 を使う。既定1は従来と完全に同一")
+    p.add_argument("--alpha-rule", default="1se", choices=["auto", "1se"],
+                   help="メタのalpha選択則。既定の1seは最良から1SE以内で最小の"
+                        "alphaに留める（20repホールドアウトでACCEPT明確、"
+                        "2026-08-29 documents/meta_native_and_alpha_selection_20260829.md）。"
+                        "auto は旧既定で、平らなAP曲線のargmaxを拾う")
     p.add_argument("--meta-target", default="zero", choices=["zero", "uniform"],
                    help="メタ重みの縮小先。uniform は等分ブレンドへ縮む")
     a = p.parse_args()
@@ -906,4 +952,4 @@ if __name__ == "__main__":
         h2_stable_leverage=a.h2_stable_leverage,
         output=a.output, linear_preprocess=a.linear_preprocess,
         linear_log_extra=a.linear_log_extra, alpha_rule=a.alpha_rule,
-        a7_fill=a.a7_fill)
+        a7_fill=a.a7_fill, n_seeds=a.n_seeds)
